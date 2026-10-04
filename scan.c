@@ -28,13 +28,16 @@ static void bfs(void)
     queue[tail++] = 0;
     while (head < tail) {
         uint32_t x = queue[head++];
-        for (unsigned m = 0; m < MOVES; ++m) {
+        for (unsigned f = 0; f < FACES; ++f) {
             unsigned cp = x / NORI, co = x % NORI;
-            apply_move(&cp, &co, m);
-            uint32_t y = cp * NORI + co;
-            if (dist[y] == UNSEEN) {
-                dist[y] = (uint8_t) (dist[x] + 1);
-                queue[tail++] = y;
+            for (unsigned t = 1; t <= 3; ++t) {
+                cp = perm_move[f][cp];
+                co = ori_move[f][co];
+                uint32_t y = cp * NORI + co;
+                if (dist[y] == UNSEEN) {
+                    dist[y] = (uint8_t) (dist[x] + 1);
+                    queue[tail++] = y;
+                }
             }
         }
     }
@@ -73,6 +76,29 @@ static void format_state(const state_t *s, char out[2 * CUBIES + 1])
     out[2 * CUBIES] = '\0';
 }
 
+/* rank_perm and rank_ori in ida.c must invert the unrank functions here. */
+static int check_rank(void)
+{
+    state_t s;
+    for (unsigned r = 0; r < NPERM; ++r) {
+        unrank_perm(r, s.p);
+        if (rank_perm(s.p) != r) {
+            fprintf(stderr, "rank_perm fails at %u\n", r);
+            return 0;
+        }
+    }
+    for (unsigned r = 0; r < NORI; ++r) {
+        unrank_ori(r, s.o);
+        if (rank_ori(s.o) != r) {
+            fprintf(stderr, "rank_ori fails at %u\n", r);
+            return 0;
+        }
+    }
+    printf("rank: all %d permutations and %d orientations round-trip\n",
+           NPERM, NORI);
+    return 1;
+}
+
 /* Gate H1: h(s) <= d(s) on every state. Also reports how tight h is. */
 static int check_admissible(void)
 {
@@ -104,6 +130,9 @@ int main(int argc, char **argv)
                 MAX_DEPTH);
         return 2;
     }
+
+    if (!check_rank())
+        return 1;
 
     bfs();
     unsigned long hist[MAX_DEPTH + 1] = {0};

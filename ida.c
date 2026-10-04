@@ -1,9 +1,9 @@
 /* Host reference for the RV32I solver.
  *
  * IDA* over the factored (permutation, orientation) index pair, pruned by the
- * pattern databases from gen_tables.c. The search obeys the target's rules:
- * no heap, no recursion, no multiply or divide. Parsing and the one-off rank
- * of the input still use host arithmetic.
+ * pattern databases from gen_tables.c. The search and the rank of the input
+ * obey the target's rules: no heap, no recursion, no multiply or divide.
+ * Only parsing and the host-side checks still use host arithmetic.
  */
 #include <stdint.h>
 #include <stdio.h>
@@ -19,6 +19,9 @@ typedef struct {
 
 static const char *const move_names[MOVES] = {"R",  "R2", "R'", "B", "B2",
                                               "B'", "D",  "D2", "D'"};
+/* The three turns of each face must stay adjacent and in the order 1, 2, 3:
+ * search() derives each sibling from the previous one by one more turn.
+ */
 static const uint8_t face_of[MOVES] = {0, 0, 0, 1, 1, 1, 2, 2, 2};
 static const uint8_t turns_of[MOVES] = {1, 2, 3, 1, 2, 3, 1, 2, 3};
 
@@ -37,28 +40,14 @@ static const uint8_t twist[FACES][CUBIES] = {
 /* Children generated, per bound and in total. */
 static unsigned long nodes_at_bound[MAX_DEPTH + 1], nodes_total;
 
+/* Each table is an exact distance in an abstraction, so each is admissible,
+ * and so is their max. Their sum is not: one move changes both at once.
+ * Each table is zero only at its solved index, so h == 0 iff solved.
+ */
 static unsigned heuristic(unsigned pi, unsigned oi)
 {
-    /* TODO 2: combine perm_dist[pi] and ori_dist[oi] into one lower bound
-     * that never exceeds the true distance. Returning 0 is admissible but
-     * prunes nothing.
-     */
-
-    return (perm_dist[pi] > ori_dist[oi]) ? perm_dist[pi] : ori_dist[oi];
-    
-     
-    (void) pi;
-    (void) oi;
-    return 0;
-}
-
-static void apply_move(unsigned *pi, unsigned *oi, unsigned m)
-{
-    unsigned f = face_of[m];
-    for (unsigned t = 0; t < turns_of[m]; ++t) {
-        *pi = perm_move[f][*pi];
-        *oi = ori_move[f][*oi];
-    }
+    unsigned hp = perm_dist[pi], ho = ori_dist[oi];
+    return hp > ho ? hp : ho;
 }
 
 /* One depth-first pass limited to `bound` moves. Written as a loop over an
@@ -84,39 +73,34 @@ static int search(unsigned pi0, unsigned oi0, unsigned bound,
         }
         unsigned m = next[g]++;
 
-        /* TODO 3: skip m if it turns the same face as the move that led
-         * here, path[g - 1]. The root (g == 0) has no previous move.
+        /* Two turns of the same face in a row merge or cancel. Skipping
+         * the first turn of a face skips all three, so the sibling chain
+         * below never starts from a stale entry.
          */
-        if(g > 0 && face_of[m] == face_of[path[g - 1]])
-        {
+        if (g > 0 && face_of[m] == face_of[path[g - 1]])
             continue;
-        } 
 
-        unsigned cp = pi[g], co = oi[g];
-        apply_move(&cp, &co, m);
-        ++nodes_at_bound[bound];
-        unsigned h = heuristic(cp, co);
-        path[g] = (uint8_t) m;
-
-        /* TODO 4: goal test. How do you recognise the solved state from
-         * (cp, co), or from h? What should be returned?
+        /* pi[g + 1] holds the previous sibling: deeper levels only write
+         * from pi[g + 2] on. Each child then costs one quarter turn.
          */
-        if(cp == 0 && co == 0)
-        {
-            return g + 1; 
-        }
-        /* TODO 5: prune. The child is at depth g + 1 and needs at least h
-         * more moves. Skip it if that cannot fit within bound.
-         */
-        if(g + 1 + h > bound)
-        {
-            continue;
-        }
-
-        if (g + 1 >= MAX_DEPTH) /* array guard until TODO 5 is filled */
-            continue;
+        unsigned from = turns_of[m] == 1 ? g : g + 1;
+        unsigned cp = perm_move[face_of[m]][pi[from]];
+        unsigned co = ori_move[face_of[m]][oi[from]];
         pi[g + 1] = cp;
         oi[g + 1] = co;
+        path[g] = (uint8_t) m;
+        ++nodes_at_bound[bound];
+
+        if (cp == 0 && co == 0)
+            return (int) g + 1;
+
+        /* A child kept here is unsolved, so h >= 1 and g + 1 < bound <= 11:
+         * the stack never grows past MAX_DEPTH and needs no guard.
+         */
+        unsigned h = heuristic(cp, co);
+        if (g + 1 + h > bound)
+            continue;
+
         next[g + 1] = 0;
         ++g;
     }
@@ -127,10 +111,10 @@ static int solve(unsigned pi, unsigned oi, uint8_t path[MAX_DEPTH])
     if (pi == 0 && oi == 0)
         return 0;
 
-    /* TODO 6: where should the bound start, and why is it safe to stop
-     * after MAX_DEPTH? Starting at 1 is correct but wastes passes.
+    /* h never overestimates, so no bound below h(root) can succeed, and
+     * the first bound that does is the optimal length. The diameter is 11,
+     * so a valid state always succeeds by MAX_DEPTH.
      */
-     
     for (unsigned bound = heuristic(pi, oi); bound <= MAX_DEPTH; ++bound) {
         int len = search(pi, oi, bound, path);
         nodes_total += nodes_at_bound[bound];
@@ -161,26 +145,35 @@ static int parse_state(const char *in, state_t *s)
     return in[2 * CUBIES] == '\0' && sum % 3 == 0;
 }
 
-/* TODO 7: these run once per query. On RV32I the multiplies by 7..1 and by
- * 3 have to become shifts and adds; work out each sequence.
+/* Lehmer code in mixed radix 7, 6, ..., 1, with each multiply unrolled into
+ * shifts and adds since RV32I has none. These run once per query, so
+ * clarity matters more than their few instructions.
  */
 static unsigned rank_perm(const uint8_t p[CUBIES])
 {
-    unsigned r = 0;
-    for (unsigned i = 0; i < CUBIES; ++i) {
+    unsigned s[CUBIES - 1]; /* the last digit is always 0 */
+    for (unsigned i = 0; i < CUBIES - 1; ++i) {
         unsigned smaller = 0;
         for (unsigned j = i + 1; j < CUBIES; ++j)
             smaller += p[j] < p[i];
-        r = r * (CUBIES - i) + smaller;
+        s[i] = smaller;
     }
+
+    unsigned r = s[0];
+    r = (r << 2) + (r << 1) + s[1]; /* x6 */
+    r = (r << 2) + r + s[2];        /* x5 */
+    r = (r << 2) + s[3];            /* x4 */
+    r = (r << 1) + r + s[4];        /* x3 */
+    r = (r << 1) + s[5];            /* x2 */
     return r;
 }
 
+/* Base 3 over the first six orientations; the seventh is implied. */
 static unsigned rank_ori(const uint8_t o[CUBIES])
 {
     unsigned r = 0;
     for (unsigned i = 0; i < CUBIES - 1; ++i)
-        r = r * 3 + o[i];
+        r = (r << 1) + r + o[i];
     return r;
 }
 
