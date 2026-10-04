@@ -8,3 +8,4 @@ ida
 scan
 tables.h
 tables.s
+build/

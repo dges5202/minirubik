@@ -12,7 +12,7 @@ VECTORS := tests/solutions.txt
 INVALID_STATES := 1234567111111 123456711111111 02345671111111 82345671111111 \
 	12345671111110 12345671111114 1234567111111a 11345671111111 12345671111112
 
-.PHONY: all check prove clean indent
+.PHONY: all check prove clean indent asm iret FORCE
 
 all: solver mini
 
@@ -33,6 +33,31 @@ ida: ida.c tables.h
 
 scan: scan.c ida.c tables.h
 	$(CC) $(CFLAGS) $< -o $@
+
+# Ripes has no .if, so the GNU preprocessor expands #if RENDER, #include and
+# STATE into plain assembly. One source yields a CLI build (measurable with
+# --iret) and a GUI build (drives the LED matrix); they differ only in RENDER.
+RV_CPP ?= riscv64-unknown-elf-cpp
+RV_CPPFLAGS = -P -x assembler-with-cpp -DSTATE='"$(STATE)"'
+ASM_SRC ?= rubik.S
+STATE ?= $(SAMPLE_STATE)
+PROC ?= RV32_ISS
+
+build/rubik-cli.s: $(ASM_SRC) tables.s FORCE
+	@mkdir -p build
+	$(RV_CPP) $(RV_CPPFLAGS) -DRENDER=0 $< -o $@
+
+build/rubik-gui.s: $(ASM_SRC) tables.s FORCE
+	@mkdir -p build
+	$(RV_CPP) $(RV_CPPFLAGS) -DRENDER=1 $< -o $@
+
+asm: build/rubik-cli.s build/rubik-gui.s
+
+iret: build/rubik-cli.s
+	@test -n "$(RIPES)" || { echo "RIPES is unset; source env.sh"; exit 1; }
+	$(RIPES) --mode cli -t asm --src $< --proc $(PROC) --iret --exectime
+
+FORCE:
 
 check: solver mini $(VECTORS)
 	./solver --self-test
@@ -107,3 +132,4 @@ endif
 
 clean:
 	$(RM) solver mini gen_tables ida scan tables.h tables.s
+	$(RM) -r build
