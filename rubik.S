@@ -6,13 +6,22 @@
 // 14-character input string and RENDER selects the LED build. Use // comments
 // so a comment can never be read as a preprocessor directive.
 
-#include "tables.s"
+
 
 .data
+pi: .zero 24
+oi: .zero 24
+
+#include "tables.s"
+
 state:  .string STATE
 p: .zero 7
 o: .zero 7
 s: .zero 7
+path: .zero 11
+next: .zero 12
+face_of: .byte 0, 0, 0, 1, 1, 1, 2, 2, 2
+turns_of: .byte 1, 2, 3, 1, 2, 3, 1, 2, 3
 
 // TODO (design): search stack pi[], oi[], next[], path[], one entry per depth.
 //   How wide is each element (.word / .half / .byte)? The width decides the
@@ -207,12 +216,205 @@ greater_discision:
     ecall
 
 skip_label1:
-    mv a0, s9
+    
+    // 4. IDA* outer loop: bound from h(root) up to 11.
+    //    ida.c: solve
+    add s0, x0, s9 // s0 = bound = heuristic(pi,oi)
+    addi s1, x0, 11 //s1 = MAX_DEPTH = 11
+
+    addi s6, x0, 9 // s6 = 9
+
+loop_solve:
+    //int len = search(pi, oi, bound, path) s8 = len
+    addi s2, x0, 0 //s2 = g = 0
+    
+    la s3, pi // pi[0]'s memory
+    sh s11, 0(s3) // store s11(rank_perm) to pi[0]
+
+    la s4, oi // oi[0]'s memory
+    sh s10, 0(s4) // store s10(rank_ori) to oi[0]
+
+    la s5, next // next[0]'s memory
+    sb x0, 0(s5) // store 0 to next[0]
+
+    la s7, path // path[0]'s memory
+
+    la s8, face_of //face_of[0]'s memory
+
+    la a3, turns_of // turns_of[0]'s memory
+
+    //li a0, 32
+    //li a7, 11
+    //ecall
+
+    //mv a0, s0
+    //li a7, 1
+    //ecall
+
+search_top:
+    //if next[g] == 9
+    add t1, s5, s2 // next[g]'s memory
+    lbu t2, 0(t1) //t2 = next[g]
+
+    bne t2, s6, child
+
+    beq s2, x0, bound_failed
+
+    addi s2, s2, -1 //s2 = g = g - 1
+
+
+    j search_top
+
+
+child:
+    add a1, t2, x0 // a1 = m
+    addi t2, t2, 1 //t2 = next[g]++
+    sb t2, 0(t1) //store next[g]++
+
+
+
+    add t3, s8, x0
+    add t3, t3, a1 //face_of[m]'s memory
+    lbu a5, 0(t3) //a5 = face_of[m]
+
+    beq x0, s2, no_prev // if s2 = g == 0
+
+    add t5, s7, s2 //path[g]'s memory
+    addi t5, t5, -1 //path[g - 1]'s memory
+    lbu t6, 0(t5) //t6 = path[g - 1]
+
+    add t3, s8, t6 // face_of[path[g - 1]]*s memory
+    lbu t5, 0(t3) // t5 = face_of[path[g - 1]]
+    beq t5, a5, search_top
+
+no_prev:
+
+
+    add t0, a3, a1 //turns_of[m]'s memory
+    lbu t1, 0(t0) //t1 = turns_of[m]
+
+    addi t2, x0, 1
+
+    add a6, s2, x0 // if turns_of[m] == 1; a6 = from = g
+
+    beq t1, t2, no_prev_equal1
+    addi a6, s2, 1 //if turns_of[m] != 1; a6 = from = g + 1
+
+no_prev_equal1:
+    //chose list
+    la t0, perm_move_r //t0 = perm_move_r[0]'s memory
+    la t1, ori_move_r //t1 = ori_move_r[0]'s memory
+    beq a5, x0, selected // if face == 0; selected
+
+    la t0, perm_move_b // t0 = perm_move_b[0]'s memory
+    la t1, ori_move_b // t1 = ori_move_b[0]'s memory
+    addi t2, x0, 1
+    beq a5, t2, selected // if face == 1; selected
+
+    la t0, perm_move_d // t0 = perm_move_d[0]'s memory
+    la t1, ori_move_d // t1 = ori_move_d[0]'s memory
+
+
+selected:
+    //cp
+    slli t5, a6, 1
+    add t2, s3, t5 //t2 = pi[from]'s memory
+    lhu t3, 0(t2) //t3 = pi[from]
+    slli t4, t3, 1
+    add t2, t4, t0 //t2 = perm_move_x[0]'s memory + pi[from]
+    lhu t6, 0(t2) //t6 = perm_move[face_of[m]][pi[from]]
+
+    //co
+    add t2, s4, t5 //t2 = oi[from]'s memory
+    lhu t3, 0(t2) //t3=oi[from]
+    slli t4, t3, 1
+    add t2, t4, t1 //t2 = ori_move_x[0]'s memory + oi[from]
+    lhu t5, 0(t2) // t5 = ori_move[face_of[m]][oi[from]]
+
+    //save
+    addi t2, s2, 1 // t2 = g + 1
+    slli t3, t2, 1 // t3 = t2 << 1
+
+    add t4, s3, t3 //t4 = pi[g + 1]'s memory
+    sh t6, 0(t4) // store perm_move[face_of[m]][pi[from]] to pi[g + 1]
+
+    add t4, s4, t3//t4 = oi[g + 1]'s memory
+    sh t5, 0(t4) // store ori_move[face_of[m]][oi[from]] to oi[g + 1]
+
+    add t3, s7, s2 //t3 = path[g]'s memory
+    sb a1, 0(t3) //store m to path[g]
+
+
+    //if discision
+    or t2, t5, t6 // t2 == t5 || t6
+    beq t2, x0, found
+
+    //heuristic
+    la t0, perm_dist // perm_dist[0]'s first memory
+    la t1, ori_dist // ori_dist[0]'s first memory
+
+    add t2, t0, t6 // perm_dist[cp]'s memory
+    add t3, t1, t5 // ori_dist[co]'s memory
+
+    lbu t4, 0(t2) //perm_dist[cp]
+    lbu a2, 0(t3) //ori_dist[co]
+
+    add s9, x0, t4  // s9 = h
+    bgeu t4, a2, greater_discision1
+    add s9, x0, a2
+
+greater_discision1:
+
+
+    addi t0, s2, 1 //t0 = g + 1
+    add t0, t0, s9 // t0 = g + 1 + h
+
+    bltu s0, t0, search_top
+
+    add t0, s5, s2
+    addi t0, t0, 1
+
+    sb x0, 0(t0) // store 0 to next[g + 1]
+
+    addi s2, s2, 1 //++g
+
+    j search_top
+
+
+bound_failed:
+
+    addi s0, s0, 1
+    bleu s0, s1, loop_solve
+
+found:
+    addi t2, s2, 1 //t2 = g + 1
+
+    li a0, 32
+    li a7, 11
+    ecall
+
+    mv a0, t2
     li a7, 1
     ecall
 
-    // 4. IDA* outer loop: bound from h(root) up to 11.
-    //    ida.c: solve
+    addi t3, x0, 0 // t3 = i = 0
+
+loop_print:
+    lbu t4, 0(s7) //t4 = path[0]
+
+    li a0, 32
+    li a7, 11
+    ecall
+
+    mv a0, t4
+    li a7, 1
+    ecall
+
+    addi s7, s7, 1
+    addi t3, t3, 1
+    bne t3, t2, loop_print
+    
+
 
     // 5. One bounded depth-first pass with the explicit stack.
     //    ida.c: search
