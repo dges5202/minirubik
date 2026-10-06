@@ -173,7 +173,6 @@ loop_rank_p_in:
 
     mv s11, t0
 
-
     //li a0, 32
     //li a7, 11
     //ecall
@@ -182,12 +181,35 @@ loop_rank_p_in:
     //li a7, 1
     //ecall
 
-    
-    
-
-
-
     // 3. Already solved (pi == 0 and oi == 0)? Print an empty line and exit.
+//heuristic
+    la s0, perm_dist // perm_dist[0]'s first memory
+    la s1, ori_dist // ori_dist[0]'s first memory
+
+    add t0, s0, s11 // perm_dist[pi]'s memory
+    add t1, s1, s10 // ori_dist[oi]'s memory
+
+    lbu t2, 0(t0) //perm_dist[pi]
+    lbu t3, 0(t1) //ori_dist[oi]
+
+    add s9, x0, t2
+    bgeu t2, t3, greater_discision
+    add s9, x0, t3
+greater_discision:
+
+    bne s9, x0, skip_label1
+
+    li a0, 10
+    li a7, 11
+    ecall
+
+    li a7, 10
+    ecall
+
+skip_label1:
+    mv a0, s9
+    li a7, 1
+    ecall
 
     // 4. IDA* outer loop: bound from h(root) up to 11.
     //    ida.c: solve
