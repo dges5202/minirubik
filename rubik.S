@@ -23,6 +23,17 @@ next: .zero 12
 face_of: .byte 0, 0, 0, 1, 1, 1, 2, 2, 2
 turns_of: .byte 1, 2, 3, 1, 2, 3, 1, 2, 3
 
+move_names: 
+    .byte 82,  0
+    .byte 82, 50
+    .byte 82, 39
+    .byte 66,  0
+    .byte 66, 50
+    .byte 66, 39
+    .byte 68,  0
+    .byte 68, 50
+    .byte 68, 39
+
 // TODO (design): search stack pi[], oi[], next[], path[], one entry per depth.
 //   How wide is each element (.word / .half / .byte)? The width decides the
 //   shift you need to turn a depth into an address.
@@ -225,7 +236,6 @@ skip_label1:
     addi s6, x0, 9 // s6 = 9
 
 loop_solve:
-    //int len = search(pi, oi, bound, path) s8 = len
     addi s2, x0, 0 //s2 = g = 0
     
     la s3, pi // pi[0]'s memory
@@ -387,34 +397,6 @@ bound_failed:
     bleu s0, s1, loop_solve
 
 found:
-    addi t2, s2, 1 //t2 = g + 1
-
-    li a0, 32
-    li a7, 11
-    ecall
-
-    mv a0, t2
-    li a7, 1
-    ecall
-
-    addi t3, x0, 0 // t3 = i = 0
-
-loop_print:
-    lbu t4, 0(s7) //t4 = path[0]
-
-    li a0, 32
-    li a7, 11
-    ecall
-
-    mv a0, t4
-    li a7, 1
-    ecall
-
-    addi s7, s7, 1
-    addi t3, t3, 1
-    bne t3, t2, loop_print
-    
-
 
     // 5. One bounded depth-first pass with the explicit stack.
     //    ida.c: search
@@ -426,6 +408,49 @@ loop_print:
     //    face without multiplying by the table size?
 
     // 6. Print the path as move names separated by spaces, then a newline.
+    addi t0, x0, 0 //t0 = i = 0
+    addi t1, s2, 1 //t1 = g + 1
+
+    la t3, move_names //move_names[0]'s memory
+    //s7 = path[0]'s memory
+
+loop_print:
+    add t2, s7, t0 // t2 = path[i]'s memory
+    lbu t4, 0(t2) // t4 = path[i]
+    slli t4, t4, 1 // t4 = t4*2
+
+    add t6, t3, t4 // t3 = move_names[path[i]]'s memory
+    lbu t5, 0(t6) // t5 = move_names[path[i]]
+
+    beq t0, x0, print_equal
+
+    li a0, 32
+    li a7, 11
+    ecall
+
+print_equal:
+    mv a0, t5
+    li a7, 11
+    ecall
+
+    addi t6, t6, 1 // move_names[path[i + 1]]'s memory
+    lbu t5, 0(t6) // t5 = move_names[path[i + 1]]
+
+    beq t5, x0, print_equal2
+
+    mv a0, t5
+    li a7, 11
+    ecall
+
+print_equal2:
+
+
+    addi t0, t0, 1
+
+    bne t0, t1, loop_print
+
+
+
 
     // 7. Gate T5: replay the path with the move tables and check that it
     //    reaches (0, 0). On failure print a message and exit with code 1.
