@@ -12,7 +12,7 @@ VECTORS := tests/solutions.txt
 INVALID_STATES := 1234567111111 123456711111111 02345671111111 82345671111111 \
 	12345671111110 12345671111114 1234567111111a 11345671111111 12345671111112
 
-.PHONY: all check prove clean indent asm iret FORCE
+.PHONY: all check prove clean indent asm iret size FORCE
 
 all: solver mini
 
@@ -56,6 +56,14 @@ asm: build/rubik-cli.s build/rubik-gui.s
 iret: build/rubik-cli.s
 	@test -n "$(RIPES)" || { echo "RIPES is unset; source env.sh"; exit 1; }
 	$(RIPES) --mode cli -t asm --src $< --proc $(PROC) --iret --exectime
+
+# Code size of the CLI build. --no-relax keeps every la as auipc + addi,
+# which is what Ripes executes, so the bytes match the instructions counted.
+RV_PREFIX ?= riscv64-unknown-elf-
+size: build/rubik-cli.s
+	$(RV_PREFIX)as -march=rv32i -mabi=ilp32 $< -o build/rubik-cli.o
+	$(RV_PREFIX)ld -m elf32lriscv --no-relax -e 0 build/rubik-cli.o -o build/rubik-cli.elf
+	$(RV_PREFIX)size -A build/rubik-cli.elf | awk '$$1 ~ /^\.(text|data|bss|rodata)$$/'
 
 FORCE:
 
