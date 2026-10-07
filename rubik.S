@@ -18,10 +18,15 @@ state:  .string STATE
 p: .zero 7
 o: .zero 7
 s: .zero 7
+rp: .zero 7
+ro: .zero 7
 path: .zero 11
 next: .zero 12
 face_of: .byte 0, 0, 0, 1, 1, 1, 2, 2, 2
 turns_of: .byte 1, 2, 3, 1, 2, 3, 1, 2, 3
+
+message: .string "T5 failed"
+
 
 move_names: 
     .byte 82,  0
@@ -33,6 +38,16 @@ move_names:
     .byte 68,  0
     .byte 68, 50
     .byte 68, 39
+
+source:
+    .byte 1, 4, 2, 0, 3, 5, 6, 9
+    .byte 0, 1, 2, 4, 5, 6, 3, 9
+    .byte 0, 2, 5, 3, 1, 4, 6, 9
+
+twist:
+    .byte 1, 2, 0, 2, 1, 0, 0, 9
+    .byte 0, 0, 0, 1, 2, 1, 2, 9
+    .byte 0, 0, 0, 0, 0, 0, 0, 9
 
 // TODO (design): search stack pi[], oi[], next[], path[], one entry per depth.
 //   How wide is each element (.word / .half / .byte)? The width decides the
@@ -227,6 +242,8 @@ greater_discision:
     ecall
 
 skip_label1:
+
+
     
     // 4. IDA* outer loop: bound from h(root) up to 11.
     //    ida.c: solve
@@ -449,15 +466,152 @@ print_equal2:
 
     bne t0, t1, loop_print
 
+    li a0, 10
+    li a7, 11
+    ecall
+
 
 
 
     // 7. Gate T5: replay the path with the move tables and check that it
     //    reaches (0, 0). On failure print a message and exit with code 1.
 
+    addi s0, x0, 0 //s0 = i = 0
+    addi s1, s2, 1 //s1 = len = g + 1
+
+
+    la a3, turns_of // turns_of[0]'s memory
+    la s8, face_of // face_of[0]'s memory
+    la a5, source // source[0]'s memory
+    la a6, twist // twist[0]'s memory
+    la a1, rp // rp[0]'s memory
+    la a2, ro // ro[0]'s memory
+    la s10, p // p[0]'s memory
+    la s11, o // o[0]'s memory
+
+    addi s9, x0, 3 // s9 = 3
+
+test_loop:
+    add t2, s7, s0 // t2 = path[i]'s memory
+    lbu t3, 0(t2) // t3 = m = path[i]
+
+    add t4, s8, t3 // t4 = face_of[m]'s memory
+    add t5, a3, t3 // t5 = turns_of[m]'s memory
+
+    lbu s3, 0(t4) // s3 = f = face_of[m]
+    lbu s4, 0(t5) // s4 = t = turns_of[m]
+
+
+turn_loop:
+
+    addi t2, x0, 0 // t2 = j = 0
+    addi t3, x0, 7 // t3 = 7
+
+test_loop_inner:
+    //source 1 line is 8 byte, source[f][j] == source's memory + (f << 3) + j
+    slli a4, s3, 3 // a4 = f << 3
+    add t6, t2, a4 // t6 = (f << 3) + j
+    add t0, a5, t6 // t0 = source[f][j]'s memory
+    lbu t1, 0(t0) // t1 = k = source[f][j]
+
+    add t0, s10, t1 // t0 = p[k]'s memory
+    lbu t5, 0(t0) // t5 = p[k]
+    
+    add t4, a1, t2 // t4 = rp[j]'s memory
+    sb t5, 0(t4) //store p[k] to rp[j]
+
+    //t0, t4, t5 can be used
+    add t4, s11, t1 // o[k]'s memory
+    lbu t5, 0(t4) // t5 = o[k]
+
+    add t0, a6, t6 // t0 = twist[f][j]'s memory
+    lbu t1, 0(t0) // t1 = twist[f][j]
+
+    add t0, t5, t1 // t0 = o[k] + twist[f][j] = sum
+
+
+
+    bltu t0, s9, test_smaller_disc // if sum < 3, jump to test_smaller_disc
+    
+    addi t0, t0, -3 // t0 = sum - 3
+
+test_smaller_disc:
+    add t5, a2, t2 // t5 = ro[j]'s memory
+    sb t0, 0(t5) // store sum to ro[j]
+
+    addi t2, t2, 1
+    bne t2, t3, test_loop_inner
+
+    addi t2, x0, 0 // t2 = j = 0
+    
+test_loop_inner2:
+    add t0, a1, t2 // t0 = rp[j]'s memory
+    lbu t1, 0(t0) // t1 = rp[j]
+
+    add t0, s10, t2 // t0 = p[j]'s memory
+    sb t1, 0(t0) // store rp[j] to p[j]
+
+    add t0, a2, t2 // t0 = ro[j]'s memory
+    lbu t1, 0(t0) // t1 = ro[j]
+
+    add t0, s11, t2 // t0 = o[j]'s memory
+    sb t1, 0(t0) // store ro[j] to o[j]
+
+    addi t2, t2, 1
+    bne t2, t3, test_loop_inner2
+
+
+    addi s4, s4, -1
+    bne s4, x0, turn_loop
+
+
+    addi s0, s0, 1
+    bne s0, s1, test_loop
+
+
+//------------------------------------------------------
+
+    addi s0, x0, 0 // s0 = i = 0
+    addi s1, s0, 7 // s1 = 7
+
+test_loop2:
+    //p[i] == i && o[i] == 0, pass
+    add t0, s0, s10 // t0 = p[i]'s memory
+    lbu t1, 0(t0) // t1 = p[i]
+
+    bne t1, s0, t5_failed
+
+    add t0, s0, s11 // t0 = o[i]'s memory
+    lbu t1, 0(t0) // t1 = o[i]
+
+    bne t1, x0, t5_failed
+
+    addi s0, s0, 1
+    bne s0, s1, test_loop2
+
     // 8. Exit with code 0.
     li a7, 10
     ecall
+
+
+t5_failed:
+
+    la t0, message // t0 = message's memory
+
+    li a7, 4
+    mv a0, t0
+    ecall
+
+    li a7, 11
+    li a0, 10
+    ecall
+
+
+    li a7, 93
+    li a0, 1
+    ecall
+
+
 
 #if RENDER
 // LED matrix renderer: unfolded net, redrawn after every move of the path.
