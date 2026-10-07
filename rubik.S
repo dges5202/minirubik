@@ -7,10 +7,15 @@
 // so a comment can never be read as a preprocessor directive.
 //
 // Registers that live across the search (steps 4 and 5):
-//   s0 = bound      s1 = MAX_DEPTH (11)   s2 = g          s6 = MOVES (9)
-//   s3 = pi[]       s4 = oi[]             s5 = next[]     s7 = path[]
-//   s8 = face_of[]  a3 = turns_of[]       s9 = h
-//   s10 = oi of the root                  s11 = pi of the root
+//   constants and state   s0 = bound          s1 = MOVES (9)      s2 = g
+//   arrays                s3 = pi[]           s4 = path[]         s5 = face_of[]
+//   tables                s6 = perm_move_r    s7 = ori_move_r
+//                         s8 = perm_dist      s9 = ori_dist
+//   arrays (to go)        s10 = oi[]          s11 = next[]        a3 = turns_of[]
+//   per child (scratch)   t0-t6, a1 = m, a2, a4 = h, a5 = face, a6 = from
+//   unused                a0, a7 (ecall only), ra, sp, gp, tp
+// The root (pi, oi) is stored once in pi[0], oi[0]: the search only writes
+// depth g + 1 >= 1, so they survive every bound.
 
 .data
 // Search stack, one entry per depth 0..MAX_DEPTH:
@@ -109,7 +114,7 @@ loop_o:
 
     // 2. pi = rank_perm(p), oi = rank_ori(o). No mul: shifts and adds.
     //    ida.c: rank_perm, rank_ori
-    // s10 is rank_ori, s11 is rank_perm
+    // a6 is rank_ori, a5 is rank_perm
 
 //rank_ori
     // unsigned r = 0;
@@ -120,12 +125,12 @@ loop_o:
     addi t0, x0, 0                  // t0 = i
     addi t1, x0, 6                  // t1 = CUBIES - 1
 
-    addi s10, x0, 0                 // s10 = r
+    addi a6, x0, 0                 // s10 = r
 loop_rank_o:
     lbu t2, 0(s1)                   // load s1's number
-    slli t3, s10, 1                 // t3 = (r<<1)
-    add s10, s10, t3
-    add s10, s10, t2
+    slli t3, a6, 1                 // t3 = (r<<1)
+    add a6, a6, t3
+    add a6, a6, t2
 
     addi t0, t0, 1
     addi s1, s1, 1
@@ -206,7 +211,7 @@ loop_rank_p_in:
     slli t2, t0, 1                  // t2 = r << 1
     add t0, t1, t2
 
-    mv s11, t0
+    mv a5, t0
 
     // 3. Already solved (pi == 0 and oi == 0)? Print an empty line and exit.
     //    h == 0 iff solved, so h(root) doubles as the solved test.
@@ -218,8 +223,8 @@ loop_rank_p_in:
     la s0, perm_dist                // perm_dist[0]'s first memory
     la s1, ori_dist                 // ori_dist[0]'s first memory
 
-    add t0, s0, s11                 // perm_dist[pi]'s memory
-    add t1, s1, s10                 // ori_dist[oi]'s memory
+    add t0, s0, a5                 // perm_dist[pi]'s memory
+    add t1, s1, a6                 // ori_dist[oi]'s memory
 
     lbu t2, 0(t0)                   // perm_dist[pi]
     lbu t3, 0(t1)                   // ori_dist[oi]
@@ -249,27 +254,34 @@ skip_label1:
     //        search (step 5)
     //    }
     add s0, x0, s9                  // s0 = bound = heuristic(pi,oi)
-    addi s1, x0, 11                 // s1 = MAX_DEPTH = 11
+    addi s1, x0, 9                  // s1 = const = 9
 
-    addi s6, x0, 9                  // s6 = 9
-
-loop_solve:
-    addi s2, x0, 0                  // s2 = g = 0
 
     la s3, pi                       // pi[0]'s memory
-    sh s11, 0(s3)                   // store s11(rank_perm) to pi[0]
+    la s4, path                     // path[0]'s memory
+    la s5, face_of                  // face_of[0]'s memory
 
-    la s4, oi                       // oi[0]'s memory
-    sh s10, 0(s4)                   // store s10(rank_ori) to oi[0]
+    la s6, perm_move_r              // perm_move_r[0]'s memory
+    la s7, ori_move_r               // ori_move_r[0]'s memory
 
-    la s5, next                     // next[0]'s memory
-    sb x0, 0(s5)                    // store 0 to next[0]
+    la s8, perm_dist                // perm_dist[0]'s memory
+    la s9, ori_dist                 // ori_dist[0]'s memory
 
-    la s7, path                     // path[0]'s memory
 
-    la s8, face_of                  // face_of[0]'s memory
-
+    //can be used after add offset
+    la s10, oi                      // oi[0]'s memory
+    la s11, next                    // next[0]'s memory
     la a3, turns_of                 // turns_of[0]'s memory
+    
+
+    sh a5, 0(s3)                    // store a5(rank_perm) to pi[0]
+    sh a6, 0(s10)                   // store a6(rank_ori) to oi[0]
+
+
+loop_solve:
+
+    addi s2, x0, 0                  // s2 = g = 0
+    sb x0, 0(s11)                   // store 0 to next[0]
 
     // 5. One bounded depth-first pass with the explicit stack.
     //    ida.c: search
@@ -283,10 +295,10 @@ loop_solve:
     //    }
 search_top:
     //if next[g] == 9
-    add t1, s5, s2                  // next[g]'s memory
+    add t1, s11, s2                  // next[g]'s memory
     lbu t2, 0(t1)                   // t2 = next[g]
 
-    bne t2, s6, child
+    bne t2, s1, child
 
     beq s2, x0, bound_failed
 
@@ -302,17 +314,17 @@ child:
     addi t2, t2, 1                  // t2 = next[g]++
     sb t2, 0(t1)                    // store next[g]++
 
-    add t3, s8, x0
+    add t3, s5, x0
     add t3, t3, a1                  // face_of[m]'s memory
     lbu a5, 0(t3)                   // a5 = face_of[m]
 
     beq x0, s2, no_prev             // if s2 = g == 0
 
-    add t5, s7, s2                  // path[g]'s memory
+    add t5, s4, s2                  // path[g]'s memory
     addi t5, t5, -1                 // path[g - 1]'s memory
     lbu t6, 0(t5)                   // t6 = path[g - 1]
 
-    add t3, s8, t6                  // face_of[path[g - 1]]'s memory
+    add t3, s5, t6                  // face_of[path[g - 1]]'s memory
     lbu t5, 0(t3)                   // t5 = face_of[path[g - 1]]
     beq t5, a5, search_top
 
@@ -360,7 +372,7 @@ selected:
     lhu t6, 0(t2)                   // t6 = perm_move[face_of[m]][pi[from]]
 
     //co
-    add t2, s4, t5                  // t2 = oi[from]'s memory
+    add t2, s10, t5                  // t2 = oi[from]'s memory
     lhu t3, 0(t2)                   // t3=oi[from]
     slli t4, t3, 1
     add t2, t4, t1                  // t2 = ori_move_x[0]'s memory + oi[from]
@@ -373,10 +385,10 @@ selected:
     add t4, s3, t3                  // t4 = pi[g + 1]'s memory
     sh t6, 0(t4)                    // store perm_move[face_of[m]][pi[from]] to pi[g + 1]
 
-    add t4, s4, t3                  // t4 = oi[g + 1]'s memory
+    add t4, s10, t3                  // t4 = oi[g + 1]'s memory
     sh t5, 0(t4)                    // store ori_move[face_of[m]][oi[from]] to oi[g + 1]
 
-    add t3, s7, s2                  // t3 = path[g]'s memory
+    add t3, s4, s2                  // t3 = path[g]'s memory
     sb a1, 0(t3)                    // store m to path[g]
 
     //    if (cp == 0 && co == 0) goto found;   /* length g + 1 */
@@ -396,20 +408,20 @@ selected:
     lbu t4, 0(t2)                   // perm_dist[cp]
     lbu a2, 0(t3)                   // ori_dist[co]
 
-    add s9, x0, t4                  // s9 = h
+    add a4, x0, t4                  // a4 = h
     bgeu t4, a2, greater_discision1
-    add s9, x0, a2
+    add a4, x0, a2
 
 greater_discision1:
 
     addi t0, s2, 1                  // t0 = g + 1
-    add t0, t0, s9                  // t0 = g + 1 + h
+    add t0, t0, a4                  // t0 = g + 1 + h
 
     bltu s0, t0, search_top         // bound < g + 1 + h: prune
 
     //    next[g + 1] = 0;
     //    ++g;
-    add t0, s5, s2
+    add t0, s11, s2
     addi t0, t0, 1
 
     sb x0, 0(t0)                    // store 0 to next[g + 1]
@@ -422,7 +434,8 @@ greater_discision1:
 bound_failed:
 
     addi s0, s0, 1
-    bleu s0, s1, loop_solve
+    addi t0, x0, 11                 // t0 = MAX_DEPTH = 11
+    bleu s0, t0, loop_solve
 
 found:
 
@@ -435,10 +448,9 @@ found:
     addi t1, s2, 1                  // t1 = g + 1
 
     la t3, move_names               // move_names[0]'s memory
-    //s7 = path[0]'s memory
 
 loop_print:
-    add t2, s7, t0                  // t2 = path[i]'s memory
+    add t2, s4, t0                  // t2 = path[i]'s memory
     lbu t4, 0(t2)                   // t4 = path[i]
     slli t4, t4, 1                  // t4 = t4*2
 
@@ -505,14 +517,14 @@ print_equal2:
     addi s9, x0, 3                  // s9 = 3
 
 test_loop:
-    add t2, s7, s0                  // t2 = path[i]'s memory
+    add t2, s4, s0                  // t2 = path[i]'s memory
     lbu t3, 0(t2)                   // t3 = m = path[i]
 
     add t4, s8, t3                  // t4 = face_of[m]'s memory
     add t5, a3, t3                  // t5 = turns_of[m]'s memory
 
     lbu s3, 0(t4)                   // s3 = f = face_of[m]
-    lbu s4, 0(t5)                   // s4 = t = turns_of[m]
+    lbu s7, 0(t5)                   // s7 = t = turns_of[m]
 
 turn_loop:
 
@@ -572,8 +584,8 @@ test_loop_inner2:
     addi t2, t2, 1
     bne t2, t3, test_loop_inner2
 
-    addi s4, s4, -1
-    bne s4, x0, turn_loop
+    addi s7, s7, -1
+    bne s7, x0, turn_loop
 
     addi s0, s0, 1
     bne s0, s1, test_loop
