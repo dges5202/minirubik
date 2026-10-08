@@ -345,17 +345,12 @@ no_prev:
     //    perm_move[face_of[m]], ori_move[face_of[m]]: pick the face's tables
 no_prev_equal1:
     //chose list
-    la t0, perm_move_r              // t0 = perm_move_r[0]'s memory
-    la t1, ori_move_r               // t1 = ori_move_r[0]'s memory
-    beq a5, x0, selected            // if face == 0; selected
+    slli t0, a5, 14                 // t0 = tmp = face * 16384
+    add t0, t0, s6                  // t0 = tmp + s6
 
-    la t0, perm_move_b              // t0 = perm_move_b[0]'s memory
-    la t1, ori_move_b               // t1 = ori_move_b[0]'s memory
-    addi t2, x0, 1
-    beq a5, t2, selected            // if face == 1; selected
+    slli t1, a5, 11                 // t1 = tmp = face * 2048
+    add t1, t1, s7                  // t1 = tmp + s7
 
-    la t0, perm_move_d              // t0 = perm_move_d[0]'s memory
-    la t1, ori_move_d               // t1 = ori_move_d[0]'s memory
 
     //    unsigned cp = perm_move[face_of[m]][pi[from]];
     //    unsigned co = ori_move[face_of[m]][oi[from]];
@@ -367,6 +362,7 @@ selected:
     slli t5, a6, 1
     add t2, s3, t5                  // t2 = pi[from]'s memory
     lhu t3, 0(t2)                   // t3 = pi[from]
+
     slli t4, t3, 1
     add t2, t4, t0                  // t2 = perm_move_x[0]'s memory + pi[from]
     lhu t6, 0(t2)                   // t6 = perm_move[face_of[m]][pi[from]]
@@ -374,6 +370,7 @@ selected:
     //co
     add t2, s10, t5                  // t2 = oi[from]'s memory
     lhu t3, 0(t2)                   // t3=oi[from]
+    
     slli t4, t3, 1
     add t2, t4, t1                  // t2 = ori_move_x[0]'s memory + oi[from]
     lhu t5, 0(t2)                   // t5 = ori_move[face_of[m]][oi[from]]
