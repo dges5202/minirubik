@@ -374,8 +374,6 @@ selected:
     sh t6, 2(s3)                    // pi[g + 1] = cp (Q + 2)
     sh t5, 26(s3)                   // oi[g + 1] = co (Q + 26)
 
-    sb a1, 0(s4)                    // path[g] = m
-
     //    if (cp == 0 && co == 0) goto found;   /* length g + 1 */
     //if discision
     or t2, t5, t6                   // t2 = co | cp
@@ -404,6 +402,7 @@ greater_discision1:
     //    next[g + 1] = 0;
     //    ++g;
 
+    sb a1, 0(s4)                    // path[g] = m
     sb x0, 12(s4)                   // next[g + 1] = 0 (P + 12)
 
     addi s2, s2, 1                  // ++g
@@ -420,6 +419,8 @@ bound_failed:
     bleu s0, t0, loop_solve
 
 found:
+
+    sb a1, 0(s4)                    // path[g] = m
 
     // 6. Print the path as move names separated by spaces, then a newline.
     //
