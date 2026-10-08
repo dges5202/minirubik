@@ -396,11 +396,8 @@ selected:
     //    unsigned h = heuristic(cp, co);
     //    if (g + 1 + h > bound) continue;
     //heuristic
-    la t0, perm_dist                // perm_dist[0]'s first memory
-    la t1, ori_dist                 // ori_dist[0]'s first memory
-
-    add t2, t0, t6                  // perm_dist[cp]'s memory
-    add t3, t1, t5                  // ori_dist[co]'s memory
+    add t2, t6, s8                  // perm_dist[cp]'s memory
+    add t3, t5, s9                  // ori_dist[co]'s memory
 
     lbu t4, 0(t2)                   // perm_dist[cp]
     lbu a2, 0(t3)                   // ori_dist[co]
