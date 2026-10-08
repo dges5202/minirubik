@@ -258,7 +258,7 @@ skip_label1:
 
 
     la s3, pi                       // pi[0]'s memory
-    la s4, path                     // path[0]'s memory
+    la s4, path                     // P = path[g]
     la s5, face_of                  // face_of[0]'s memory
 
     la s6, perm_move_r              // perm_move_r[0]'s memory
@@ -295,14 +295,14 @@ loop_solve:
     //    }
 search_top:
     //if next[g] == 9
-    add t1, s11, s2                  // next[g]'s memory
-    lbu t2, 0(t1)                   // t2 = next[g]
+    lbu t2, 11(s4)                   // t2 = next[g] = path[g + 11]
 
     bne t2, s1, child
 
     beq s2, x0, bound_failed
 
     addi s2, s2, -1                 // s2 = g = g - 1
+    addi s4, s4, -1                 // s4 = path[g - 1]
 
     j search_top
 
@@ -312,17 +312,15 @@ search_top:
 child:
     add a1, t2, x0                  // a1 = m
     addi t2, t2, 1                  // t2 = next[g]++
-    sb t2, 0(t1)                    // store next[g]++
+    sb t2, 11(s4)                   // store next[g]++ to next[g]
 
-    add t3, s5, x0
-    add t3, t3, a1                  // face_of[m]'s memory
+    add t3, s5, a1                  // face_of[m]'s memory
     lbu a5, 0(t3)                   // a5 = face_of[m]
 
     beq x0, s2, no_prev             // if s2 = g == 0
 
-    add t5, s4, s2                  // path[g]'s memory
-    addi t5, t5, -1                 // path[g - 1]'s memory
-    lbu t6, 0(t5)                   // t6 = path[g - 1]
+
+    lbu t6, -1(s4)                  // t6 = path[g - 1] = next[g - 1]
 
     add t3, s5, t6                  // face_of[path[g - 1]]'s memory
     lbu t5, 0(t3)                   // t5 = face_of[path[g - 1]]
@@ -385,8 +383,7 @@ selected:
     add t4, s10, t3                  // t4 = oi[g + 1]'s memory
     sh t5, 0(t4)                    // store ori_move[face_of[m]][oi[from]] to oi[g + 1]
 
-    add t3, s4, s2                  // t3 = path[g]'s memory
-    sb a1, 0(t3)                    // store m to path[g]
+    sb a1, 0(s4)                    // store m to path[g]
 
     //    if (cp == 0 && co == 0) goto found;   /* length g + 1 */
     //if discision
@@ -415,12 +412,11 @@ greater_discision1:
 
     //    next[g + 1] = 0;
     //    ++g;
-    add t0, s11, s2
-    addi t0, t0, 1
 
-    sb x0, 0(t0)                    // store 0 to next[g + 1]
+    sb x0, 12(s4)                    // store 0 to next[g + 1]
 
     addi s2, s2, 1                  // ++g
+    addi s4, s4, 1                  // s4 = path[g++]
 
     j search_top
 
@@ -443,7 +439,11 @@ found:
 
     la t3, move_names               // move_names[0]'s memory
 
+    sub s4, s4, s2                  //s4 return to path[0]'s memory
+
 loop_print:
+
+
     add t2, s4, t0                  // t2 = path[i]'s memory
     lbu t4, 0(t2)                   // t4 = path[i]
     slli t4, t4, 1                  // t4 = t4*2
