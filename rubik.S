@@ -415,11 +415,6 @@ selected:
     add t2, t4, t1                  // t2 = ori_move_x[0]'s memory + oi[from]
     lhu t5, 0(t2)                   // t5 = ori_move[face_of[m]][oi[from]]
 
-    //save
-    sh t6, 2(s3)                    // pi[g + 1] = cp (Q + 2)
-    sh t5, 26(s3)                   // oi[g + 1] = co (Q + 26)
-
-
     //    g + 1 + max(hp, ho) > bound is hp > r || ho > r with
     //    r = bound - g - 1, so each table can prune on its own and the
     //    second load is skipped whenever the first one prunes:
@@ -430,8 +425,14 @@ selected:
     //
     //    The goal test can come last: the solved state has hp = ho = 0 and
     //    r >= 0, so it is never pruned.
+    //
+    //    The two stores run for every child, pruned or not, so they can sit
+    //    between the lbu and the bltu that uses t4: on a pipelined model that
+    //    slot would otherwise be a load-use stall.
     add t2, t6, s8                  // perm_dist[cp]'s memory
+    sh t6, 2(s3)                    // pi[g + 1] = cp (Q + 2)
     lbu t4, 0(t2)                   // t4 = hp = perm_dist[cp]
+    sh t5, 26(s3)                   // oi[g + 1] = co (Q + 26)
     bltu s10, t4, search_top        // r < hp: prune
 
     add t2, t5, s9                  // ori_dist[co]'s memory
