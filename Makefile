@@ -12,7 +12,7 @@ VECTORS := tests/solutions.txt
 INVALID_STATES := 1234567111111 123456711111111 02345671111111 82345671111111 \
 	12345671111110 12345671111114 1234567111111a 11345671111111 12345671111112
 
-.PHONY: all check prove clean indent asm ripes iret size gcc-ref FORCE
+.PHONY: all check prove clean indent asm ripes iret size gcc-ref scan-ripes FORCE
 
 all: solver mini
 
@@ -91,6 +91,13 @@ gcc-ref: build/gcc-ref.elf
 	@test -n "$(RIPES)" || { echo "RIPES is unset; source env.sh"; exit 1; }
 	$(RV_PREFIX)size -A $< | awk '$$1 ~ /^\.(text|data|bss|rodata)$$/'
 	$(RIPES) --mode cli -t elf --src $< --proc $(PROC) --iret
+
+# Retired instructions of rubik.S on every distance-11 state (a few minutes,
+# parallel), written to bench/d11_iret.csv; fails if any state fails T5,
+# returns a non-optimal path, or exceeds the 5e7 budget.
+scan-ripes: tables.s
+	@test -n "$(RIPES)" || { echo "RIPES is unset; source env.sh"; exit 1; }
+	RV_PREFIX=$(RV_PREFIX) bench/scan_ripes.sh
 
 FORCE:
 
