@@ -12,7 +12,7 @@ VECTORS := tests/solutions.txt
 INVALID_STATES := 1234567111111 123456711111111 02345671111111 82345671111111 \
 	12345671111110 12345671111114 1234567111111a 11345671111111 12345671111112
 
-.PHONY: all check prove clean indent asm iret size FORCE
+.PHONY: all check prove clean indent asm ripes iret size gcc-ref FORCE
 
 all: solver mini
 
@@ -53,6 +53,13 @@ build/rubik-gui.s: $(ASM_SRC) tables.s FORCE
 
 asm: build/rubik-cli.s build/rubik-gui.s
 
+# The GUI build with comments kept, as # so the Ripes editor accepts them.
+build/rubik-ripes.s: $(ASM_SRC) tables.s FORCE
+	@mkdir -p build
+	$(RV_CPP) $(RV_CPPFLAGS) -C -DRENDER=1 $< | sed 's|//|#|' > $@
+
+ripes: build/rubik-ripes.s
+
 iret: build/rubik-cli.s
 	@test -n "$(RIPES)" || { echo "RIPES is unset; source env.sh"; exit 1; }
 	$(RIPES) --mode cli -t asm --src $< --proc $(PROC) --iret --exectime
@@ -64,6 +71,26 @@ size: build/rubik-cli.s
 	$(RV_PREFIX)as -march=rv32i -mabi=ilp32 $< -o build/rubik-cli.o
 	$(RV_PREFIX)ld -m elf32lriscv --no-relax -e 0 build/rubik-cli.o -o build/rubik-cli.elf
 	$(RV_PREFIX)size -A build/rubik-cli.elf | awk '$$1 ~ /^\.(text|data|bss|rodata)$$/'
+
+# gcc reference build of the same C algorithm: ida.c without main and the
+# node counters (rubik.S keeps neither), wrapped by bench/gcc_ref.c. Reports
+# .text and retired instructions for STATE, comparable with size and iret.
+RV_GCC ?= $(RV_PREFIX)gcc
+REF_CFLAGS = -O2 -march=rv32i -mabi=ilp32 -ffreestanding -nostdlib \
+	-Wl,--no-relax -Wl,-e,_start
+
+build/ida_core.c: ida.c
+	@mkdir -p build
+	sed -e '/^int main(/,$$d' -e '/nodes_at_bound\[bound\]/d' \
+		-e '/nodes_total +=/d' -e '/^static unsigned long nodes_at_bound/d' $< > $@
+
+build/gcc-ref.elf: bench/gcc_ref.c build/ida_core.c tables.h FORCE
+	$(RV_GCC) $(REF_CFLAGS) -Ibuild -I. -DSTATE='"$(STATE)"' $< -o $@
+
+gcc-ref: build/gcc-ref.elf
+	@test -n "$(RIPES)" || { echo "RIPES is unset; source env.sh"; exit 1; }
+	$(RV_PREFIX)size -A $< | awk '$$1 ~ /^\.(text|data|bss|rodata)$$/'
+	$(RIPES) --mode cli -t elf --src $< --proc $(PROC) --iret
 
 FORCE:
 
