@@ -8,13 +8,14 @@
 //
 // Registers that live across the search (steps 4 and 5):
 //   constants and state   s0 = bound          s1 = MOVES (9)      s2 = g
+//                         s10 = r = bound - g - 1 (moves left below a child)
 //   depth pointers        s3 = Q = &pi[g]     s4 = P = &path[g]   s5 = face_of[]
 //   tables                s6 = perm_move_r    s7 = ori_move_r
 //                         s8 = perm_dist      s9 = ori_dist
-//   per child (scratch)   t0-t6, a1 = m, a2, a4 = h, a5 = face,
-//                         a6 = F = &pi[from]
-//   unused                s10, s11, a0, a3, a7 (ecall only), ra, sp, gp, tp
-// g, P and Q move together: push is g++, P += 1, Q += 2; pop the reverse.
+//   per child (scratch)   t0-t6, a1 = m, a5 = face, a6 = F = &pi[from]
+//   unused                s11, a0, a2, a3, a4, a7 (ecall only), ra, sp, gp, tp
+// g, P, Q and r move together: push is g++, P += 1, Q += 2, r--; pop the
+// reverse.
 // Neighbouring arrays are reached by fixed offsets, so their order in .data
 // matters: next[g] = P + 11, oi[g] = Q + 24, turns_of[m] = &face_of[m] + 9.
 // The root (pi, oi) is stored once in pi[0], oi[0]: the search only writes
@@ -322,6 +323,7 @@ skip_label1:
 loop_solve:
 
     addi s2, x0, 0                  // s2 = g = 0
+    addi s10, s0, -1                // s10 = bound - 1
     sb x0, 11(s4)                   // next[0] = 0 (next[0] = P + 11)
 
     // 5. One bounded depth-first pass with the explicit stack.
@@ -345,6 +347,7 @@ search_top:
     addi s2, s2, -1                 // s2 = g = g - 1
     addi s4, s4, -1                 // P = &path[g - 1]
     addi s3, s3, -2                 // Q = &pi[g - 1]
+    addi s10, s10, 1                // s10 = bound -1 - (g - 1)
 
     j search_top
 
@@ -416,30 +419,29 @@ selected:
     sh t6, 2(s3)                    // pi[g + 1] = cp (Q + 2)
     sh t5, 26(s3)                   // oi[g + 1] = co (Q + 26)
 
+
+    //    g + 1 + max(hp, ho) > bound is hp > r || ho > r with
+    //    r = bound - g - 1, so each table can prune on its own and the
+    //    second load is skipped whenever the first one prunes:
+    //
+    //    if (perm_dist[cp] > r) continue;
+    //    if (ori_dist[co] > r) continue;
     //    if (cp == 0 && co == 0) goto found;   /* length g + 1 */
-    //if discision
-    or t2, t5, t6                   // t2 = co | cp
-    beq t2, x0, found
-
-    //    unsigned h = heuristic(cp, co);
-    //    if (g + 1 + h > bound) continue;
-    //heuristic
+    //
+    //    The goal test can come last: the solved state has hp = ho = 0 and
+    //    r >= 0, so it is never pruned.
     add t2, t6, s8                  // perm_dist[cp]'s memory
-    add t3, t5, s9                  // ori_dist[co]'s memory
+    lbu t4, 0(t2)                   // t4 = hp = perm_dist[cp]
+    bltu s10, t4, search_top        // r < hp: prune
 
-    lbu t4, 0(t2)                   // perm_dist[cp]
-    lbu a2, 0(t3)                   // ori_dist[co]
+    add t2, t5, s9                  // ori_dist[co]'s memory
+    lbu t4, 0(t2)                   // t4 = ho = ori_dist[co]
+    bltu s10, t4, search_top        // r < ho: prune
 
-    add a4, x0, t4                  // a4 = h
-    bgeu t4, a2, greater_discision1
-    add a4, x0, a2
+    or t2, t5, t6                   // t2 = co | cp
+    beq t2, x0, found               // solved: length g + 1
 
-greater_discision1:
 
-    addi t0, s2, 1                  // t0 = g + 1
-    add t0, t0, a4                  // t0 = g + 1 + h
-
-    bltu s0, t0, search_top         // bound < g + 1 + h: prune
 
     //    next[g + 1] = 0;
     //    ++g;
@@ -450,6 +452,7 @@ greater_discision1:
     addi s2, s2, 1                  // ++g
     addi s4, s4, 1                  // P = &path[g + 1]
     addi s3, s3, 2                  // Q = &pi[g + 1]
+    addi s10, s10, -1               // s10 = bound - 1 - (g + 1)
 
     j search_top
 
