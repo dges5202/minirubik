@@ -21,6 +21,37 @@
 // depth g + 1 >= 1, so they survive every bound.
 
 .data
+#if RENDER
+// LED renderer tables (step 8). 144 bytes, words first, so everything after
+// keeps its alignment.
+//
+// color6[face]: 0xRRGGBB of each face, U=0 L=1 F=2 R=3 B=4 D=5.
+color6:
+    .word 0xFFFFFF, 0xFF8000, 0x00FF00, 0xFF0000, 0x0000FF, 0xFFFF00
+// face_off[i]: byte offset of facelet i's top-left LED from
+// LED_MATRIX_0_BASE, 4 * (y * 35 + x). Faces U L F R B D; within a face
+// top-left, top-right, bottom-left, bottom-right.
+face_off:
+    .half 36, 52, 456, 472, 980, 996, 1400, 1416, 1016, 1032, 1436, 1452
+    .half 1052, 1068, 1472, 1488, 1088, 1104, 1508, 1524, 1996, 2012, 2416, 2432
+// fl_pos[i]: corner position of facelet i (0-6 as p[], 7 = fixed corner).
+// fl_slot[i]: which sticker of that corner, 0 = U/D, then clockwise seen
+// from outside. fl_slot must directly follow fl_pos: read as &fl_pos[i] + 24.
+fl_pos:
+    .byte 6, 3, 7, 0,   6, 7, 5, 2,   7, 0, 2, 1,   0, 3, 1, 4,   3, 6, 4, 5,   2, 1, 5, 4
+fl_slot:
+    .byte 0, 0, 0, 0,   1, 2, 2, 1,   1, 2, 2, 1,   1, 2, 2, 1,   1, 2, 2, 1,   0, 0, 0, 0
+// corner_face[c][k]: face of cubie c's sticker k when solved.
+corner_face:
+    .byte 0, 3, 2                   // cubie 0 (FUR): U R F
+    .byte 5, 2, 3                   // cubie 1 (FDR): D F R
+    .byte 5, 1, 2                   // cubie 2 (FDL): D L F
+    .byte 0, 4, 3                   // cubie 3 (BUR): U B R
+    .byte 5, 3, 4                   // cubie 4 (BDR): D R B
+    .byte 5, 4, 1                   // cubie 5 (BDL): D B L
+    .byte 0, 1, 4                   // cubie 6 (BUL): U L B
+    .byte 0, 2, 1                   // cubie 7 (FUL, fixed): U F L
+#endif
 // Search stack, one entry per depth 0..MAX_DEPTH:
 //   unsigned pi[MAX_DEPTH + 1], oi[MAX_DEPTH + 1];
 // .half: pi < 5040 and oi < 729 do not fit in a byte. They come first so they
@@ -34,8 +65,16 @@ oi: .zero 24
 state:  .string STATE
 // state_t s: p[7] and o[7] parsed from STATE. s[] holds the Lehmer digits,
 // rp[]/ro[] are the scratch state r of the T5 replay.
+// With RENDER, p[7] = 7 and o[7] = 0 stand for the fixed corner, and the
+// renderer reads o[pos] as &p[pos] + 8.
+#if RENDER
+p: .zero 7
+    .byte 7
+o: .zero 8
+#else
 p: .zero 7
 o: .zero 7
+#endif
 s: .zero 7
 rp: .zero 7
 ro: .zero 7
@@ -242,6 +281,9 @@ greater_discision:
 
     bne s9, x0, skip_label1
 
+#if RENDER
+    jal ra, render                  // show the solved cube
+#endif
     li a0, 10
     li a7, 11
     ecall
@@ -503,6 +545,10 @@ print_equal2:
 
     addi s9, x0, 3                  // s9 = 3
 
+#if RENDER
+    jal ra, render                  // show the scrambled state
+#endif
+
 test_loop:
     add t2, s4, s0                  // t2 = path[i]'s memory
     lbu t3, 0(t2)                   // t3 = m = path[i]
@@ -574,6 +620,10 @@ test_loop_inner2:
     addi s7, s7, -1
     bne s7, x0, turn_loop
 
+#if RENDER
+    jal ra, render                  // redraw after move path[i]
+#endif
+
     addi s0, s0, 1
     bne s0, s1, test_loop
 
@@ -621,5 +671,128 @@ t5_failed:
     ecall
 
 #if RENDER
-// LED matrix renderer: unfolded net, redrawn after every move of the path.
+//------------------------------------------------------
+// 8. LED matrix renderer: unfolded net of the cube in p[], o[], redrawn
+//    before the replay and after every move of the path.
+//
+//    for (i = 0; i < 24; ++i) {
+//        pos = fl_pos[i], slot = fl_slot[i];
+//        cubie = p[pos], tw = o[pos];
+//        k = (slot + tw) % 3;
+//        draw_select(color6[corner_face[cubie][k]],
+//                    LED_MATRIX_0_BASE + face_off[i]);
+//    }
+//
+//    Called from T5 with live values in s0-s11 and a1-a6, so it saves and
+//    restores every register it writes except t0-t6. ra is saved too: the
+//    jal to draw_select overwrites it.
+render:
+    addi sp, sp, -64
+    sw ra, 0(sp)
+    sw s1, 4(sp)
+    sw s2, 8(sp)
+    sw s4, 12(sp)
+    sw s5, 16(sp)
+    sw s6, 20(sp)
+    sw s7, 24(sp)
+    sw s8, 28(sp)
+    sw a0, 32(sp)
+    sw a1, 36(sp)
+    sw a2, 40(sp)
+    sw a3, 44(sp)
+    sw a4, 48(sp)
+    sw a5, 52(sp)
+    sw a6, 56(sp)
+
+    li s1, LED_MATRIX_0_BASE        // s1 = LED (0, 0)'s memory
+    la s2, face_off                 // s2 = &face_off[i], .half entries
+    la s4, fl_pos                   // s4 = &fl_pos[i]; fl_slot[i] = 24(s4)
+    la s5, p                        // s5 = p[0]'s memory; o[pos] = 8(p + pos)
+    la s6, corner_face              // s6 = corner_face[0][0]'s memory
+    la s7, color6                   // s7 = color6[0]'s memory
+    addi s8, x0, 3                  // s8 = 3
+
+    addi a0, x0, 0                  // a0 = i = 0
+    addi a1, x0, 24                 // a1 = 24 facelets
+
+loop_faces:
+    lhu t1, 0(s2)                   // t1 = face_off[i]
+    add t1, t1, s1                  // t1 = facelet i's top-left LED's memory
+
+    lbu a2, 0(s4)                   // a2 = fl_pos[i] = pos
+    lbu a3, 24(s4)                  // a3 = fl_slot[i] = slot
+
+    add a4, s5, a2                  // a4 = p[pos]'s memory
+    lbu a5, 0(a4)                   // a5 = p[pos] = cubie
+    lbu a6, 8(a4)                   // a6 = o[pos] = p[pos + 8]
+
+    add a3, a3, a6                  // a3 = slot + tw
+    bltu a3, s8, smaller_disc       // if slot + tw < 3, jump to smaller_disc
+    addi a3, a3, -3                 // a3 = k = (slot + tw) % 3
+
+smaller_disc:
+    mv a2, a5                       // a2 = cubie (pos no longer needed)
+    slli a5, a5, 1                  // a5 = cubie * 2
+    add a5, a5, a2                  // a5 = cubie * 3
+
+    add a5, a5, a3                  // a5 = cubie * 3 + k
+
+    add a3, s6, a5                  // a3 = corner_face[cubie*3 + k]'s memory
+    lbu a4, 0(a3)                   // a4 = corner_face[cubie*3 + k] = face
+
+    slli a4, a4, 2                  // a4 = face * 4, .word entries
+    add a5, s7, a4                  // a5 = color6[face]'s memory
+    lw t0, 0(a5)                    // t0 = color6[face]
+
+    jal ra, draw_select             // draw facelet i
+
+    addi a0, a0, 1                  // ++i
+    addi s2, s2, 2                  // next .half
+    addi s4, s4, 1                  // next fl_pos
+    bne a0, a1, loop_faces
+
+    lw ra, 0(sp)
+    lw s1, 4(sp)
+    lw s2, 8(sp)
+    lw s4, 12(sp)
+    lw s5, 16(sp)
+    lw s6, 20(sp)
+    lw s7, 24(sp)
+    lw s8, 28(sp)
+    lw a0, 32(sp)
+    lw a1, 36(sp)
+    lw a2, 40(sp)
+    lw a3, 44(sp)
+    lw a4, 48(sp)
+    lw a5, 52(sp)
+    lw a6, 56(sp)
+    addi sp, sp, 64
+    jalr x0, ra, 0                  // return
+
+//------------------------------------------------------
+// draw_select: fill one facelet, 4 LEDs wide and 3 rows tall.
+//   in:  t0 = color, t1 = top-left LED's memory
+//   uses t2, t5, t6; leaves t0 and t1 unchanged
+//
+//   for (dy = 0; dy < 3; ++dy) {
+//       p[0] = p[1] = p[2] = p[3] = color;
+//       p += 35;                      // next row: 35 LEDs = 140 bytes
+//   }
+draw_select:
+    addi t5, x0, 0                  // t5 = dy = 0
+    addi t6, x0, 3                  // t6 = 3 rows
+    mv t2, t1                       // t2 = p, so t1 survives the call
+
+draw_label:
+    sw t0, 0(t2)                    // 4 LEDs of this row
+    sw t0, 4(t2)
+    sw t0, 8(t2)
+    sw t0, 12(t2)
+
+    addi t2, t2, 140                // next row
+
+    addi t5, t5, 1
+    bne t5, t6, draw_label
+
+    jalr x0, ra, 0                  // return
 #endif
