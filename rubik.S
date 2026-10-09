@@ -3,8 +3,10 @@
 // ida.c is the reference this file follows.
 //
 // Built through the C preprocessor (make iret / make asm): STATE becomes the
-// 14-character input string and RENDER selects the LED build. Use // comments
-// so a comment can never be read as a preprocessor directive.
+// 14-character input string, EXPECT the exact distance from the host BFS
+// (a test case checks its length against it, exit code 2 on mismatch) and
+// RENDER selects the LED build. Use // comments so a comment can never be read
+// as a preprocessor directive.
 //
 // Registers that live across the search (steps 4 and 5):
 //   constants and state   s0 = bound          s1 = MOVES (9)      s2 = g
@@ -20,6 +22,14 @@
 // matters: next[g] = P + 11, oi[g] = Q + 24, turns_of[m] = &face_of[m] + 9.
 // The root (pi, oi) is stored once in pi[0], oi[0]: the search only writes
 // depth g + 1 >= 1, so they survive every bound.
+
+// No EXPECT (a state from the grader): the distance is unknown, so only T5
+// checks the path and #if EXPECT >= 0 drops the length checks entirely, leaving
+// .text and retired instructions as without them. Ripes cannot evaluate
+// EXPECT - 1, so the checks compare against len rather than g.
+#ifndef EXPECT
+#define EXPECT -1
+#endif
 
 .data
 #if RENDER
@@ -89,6 +99,7 @@ face_of: .byte 0, 0, 0, 1, 1, 1, 2, 2, 2
 turns_of: .byte 1, 2, 3, 1, 2, 3, 1, 2, 3
 
 message: .string "T5 failed"
+message2: .string "wrong length"   // path length != EXPECT
 
 // move_names[MOVES] = {"R", "R2", "R'", "B", "B2", "B'", "D", "D2", "D'"}
 // Two bytes per name (name m starts at m << 1); Ripes has no char literals:
@@ -264,7 +275,11 @@ loop_rank_p_in:
     //
     //    unsigned hp = perm_dist[pi], ho = ori_dist[oi];
     //    h = hp > ho ? hp : ho;
-    //    if (h == 0) { putchar('\n'); exit(0); }
+    //    if (h == 0) {
+    //        if (EXPECT >= 0 && EXPECT != 0) goto len_failed;  /* len = 0 */
+    //        (EXPECT >= 0 is decided by #if, not at run time)
+    //        putchar('\n'); exit(0);
+    //    }
 //heuristic
     la s0, perm_dist                // perm_dist[0]'s first memory
     la s1, ori_dist                 // ori_dist[0]'s first memory
@@ -281,6 +296,13 @@ loop_rank_p_in:
 greater_discision:
 
     bne s9, x0, skip_label1
+
+    // Solved at the root, so len = 0. s2 is still the parse pointer here
+    // (g = 0 is only set at loop_solve), so compare EXPECT with x0.
+#if EXPECT >= 0
+    li t0, EXPECT                   // t0 = EXPECT
+    bne t0, x0, len_failed          // EXPECT != len = 0
+#endif
 
 #if RENDER
     jal ra, render                  // show the solved cube
@@ -465,8 +487,14 @@ bound_failed:
     bleu s0, t0, loop_solve
 
 found:
-
     sb a1, 0(s4)                    // path[g] = m
+
+#if EXPECT >= 0
+    //    if (EXPECT != g + 1) goto len_failed;
+    li t0, EXPECT                   // t0 = EXPECT
+    addi t1, s2, 1                  // t1 = len = g + 1
+    bne t0, t1, len_failed          // EXPECT != len
+#endif
 
     // 6. Print the path as move names separated by spaces, then a newline.
     //
@@ -673,6 +701,24 @@ t5_failed:
     li a7, 93
     li a0, 1
     ecall
+
+#if EXPECT >= 0
+    //    puts("wrong length"); exit(2);
+len_failed:
+    la t0, message2                 // t0 = message2's memory
+
+    li a7, 4
+    mv a0, t0
+    ecall
+
+    li a7, 11
+    li a0, 10
+    ecall
+
+    li a7, 93
+    li a0, 2
+    ecall
+#endif
 
 #if RENDER
 //------------------------------------------------------

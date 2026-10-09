@@ -12,7 +12,7 @@ VECTORS := tests/solutions.txt
 INVALID_STATES := 1234567111111 123456711111111 02345671111111 82345671111111 \
 	12345671111110 12345671111114 1234567111111a 11345671111111 12345671111112
 
-.PHONY: all check prove clean indent asm ripes iret size gcc-ref scan-ripes FORCE
+.PHONY: all check prove clean indent asm ripes iret size gcc-ref scan-ripes test-ripes FORCE
 
 all: solver mini
 
@@ -98,6 +98,32 @@ gcc-ref: build/gcc-ref.elf
 scan-ripes: tables.s
 	@test -n "$(RIPES)" || { echo "RIPES is unset; source env.sh"; exit 1; }
 	RV_PREFIX=$(RV_PREFIX) bench/scan_ripes.sh
+
+# Gate T7: each test state on RV32_ISS and a pipelined model. EXPECT is the
+# length of the BFS solver's path, so rubik.S itself checks the length (exit 2)
+# and T5 (exit 1). A grader's state: make test-ripes TEST_STATES=...
+TEST_STATES ?= 12345671111111 57432163231223 21345671111111
+TEST_PROCS ?= RV32_ISS RV32_5S
+
+test-ripes: solver tables.s
+	@test -n "$(RIPES)" || { echo "RIPES is unset; source env.sh"; exit 1; }
+	@mkdir -p build
+	@for state in $(TEST_STATES); do \
+		solution=$$(./solver $$state) || exit 1; \
+		expect=$$(echo $$solution | wc -w); \
+		$(RV_CPP) -P -x assembler-with-cpp -DSTATE='"'$$state'"' \
+			-DEXPECT=$$expect -DRENDER=0 $(ASM_SRC) -o build/test-$$state.s || exit 1; \
+		for proc in $(TEST_PROCS); do \
+			out=$$($(RIPES) --mode cli -t asm --src build/test-$$state.s \
+				--proc $$proc --iret 2>&1 | tr -d '\0'); \
+			status=$$(echo "$$out" | sed -n 's/^Program exited with code: //p'); \
+			iret=$$(echo "$$out" | awk '/instructions retired/ { getline; print }'); \
+			printf '%s %-8s len %2s exit %s iret %9s  %s\n' $$state $$proc \
+				$$expect "$$status" "$$iret" "$$(echo "$$out" | head -n 1)"; \
+			test "$$status" = 0 || exit 1; \
+		done; \
+	done
+	@echo "T7: every test state passed on $(TEST_PROCS)"
 
 FORCE:
 
