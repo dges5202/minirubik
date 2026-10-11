@@ -79,12 +79,15 @@ static int search(unsigned pi0, unsigned oi0, unsigned ci0, unsigned bound,
         }
         unsigned m = next[g]++;
 
-        /* Two turns of the same face in a row merge or cancel. Skipping
-         * the first turn of a face skips all three, so the sibling chain
-         * below never starts from a stale entry.
+        /* Two turns of the same face in a row merge or cancel. Moves are
+         * tried in order, so m is the face's first turn here: skip all
+         * three at once. The sibling chain below then never starts from a
+         * stale entry.
          */
-        if (g > 0 && face_of[m] == face_of[path[g - 1]])
+        if (g > 0 && face_of[m] == face_of[path[g - 1]]) {
+            next[g] += 2;
             continue;
+        }
 
         /* pi[g + 1] holds the previous sibling: deeper levels only write
          * from pi[g + 2] on. Each child then costs one quarter turn.

@@ -461,7 +461,7 @@ search_top:
 
     //    unsigned m = next[g]++;
     //    if (g > 0 && face_of[m] == face_of[path[g - 1]])
-    //        continue;
+    //        goto same_face;
 child:
     add a1, t2, x0                  // a1 = m
     addi t2, t2, 1                  // t2 = next[g]++
@@ -478,7 +478,7 @@ child:
     add t4, s5, t6                  // face_of[path[g - 1]]'s memory
     lbu t5, 0(t4)                   // t5 = face_of[path[g - 1]]
 
-    beq t5, a5, search_top
+    beq t5, a5, same_face           // same face as path[g - 1]: skip it
 
     //    pi[g + 1] holds the previous sibling, so each child is one turn:
     //    unsigned from = turns_of[m] == 1 ? g : g + 1;
@@ -580,6 +580,17 @@ selected:
     addi s3, s3, 2                  // Q = &pi[g + 1]
     addi s10, s10, -1               // s10 = bound - 1 - (g + 1)
 
+    j search_top
+
+    //    m is the first turn of the parent's face (moves are tried in
+    //    order), so skip all three turns of it at once. Kept out of line:
+    //    the common case, a different face, falls through the beq instead
+    //    of paying for a taken branch.
+    //
+    //    if (face_of[m] == face_of[path[g - 1]]) { next[g] += 2; continue; }
+same_face:
+    addi t2, t2, 2                  // t2 = m + 3: first turn of the next face
+    sb t2, 11(s4)                   // next[g] = m + 3
     j search_top
 
     //    No path within bound: ++bound and search again (step 4).
