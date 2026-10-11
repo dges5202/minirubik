@@ -1,5 +1,6 @@
 // RV32I optimal solver for the 2x2x2 cube: IDA* over the factored
-// (permutation, orientation) index pair, pruned by two pattern databases.
+// (permutation, orientation) index pair, pruned by three pattern databases:
+// permutation, orientation, and cubies 0, 3, 6 with their twists (ci).
 // ida.c is the reference this file follows.
 //
 // Built through the C preprocessor (make iret / make asm): STATE becomes the
@@ -12,16 +13,17 @@
 //   constants and state   s0 = bound          s1 = MOVES (9)      s2 = g
 //                         s10 = r = bound - g - 1 (moves left below a child)
 //   depth pointers        s3 = Q = &pi[g]     s4 = P = &path[g]   s5 = face_of[]
-//   tables                s6 = perm_move_r    s7 = ori_move_r
-//                         s8 = perm_dist      s9 = ori_dist
-//   per child (scratch)   t0-t6, a1 = m, a5 = face, a6 = F = &pi[from]
-//   unused                s11, a0, a2, a3, a4, a7 (ecall only), ra, sp, gp, tp
+//   tables                s6 = perm_move_r    s7 = ori_move_r     s11 = c3_move_r
+//                         s8 = perm_dist      s9 = ori_dist       a4 = c3_dist
+//   per child (scratch)   t0-t6, a1 = m, a5 = face, a6 = F = &pi[from],
+//                         a0 = c3_move row of the face, a3 = cc
+//   unused                a2, a7 (ecall only), ra, sp, gp, tp
 // g, P, Q and r move together: push is g++, P += 1, Q += 2, r--; pop the
 // reverse.
 // Neighbouring arrays are reached by fixed offsets, so their order in .data
 // matters: next[g] = P + 11, oi[g] = Q + 24, turns_of[m] = &face_of[m] + 9.
-// The root (pi, oi) is stored once in pi[0], oi[0]: the search only writes
-// depth g + 1 >= 1, so they survive every bound.
+// The root (pi, oi, ci) is stored once in pi[0], oi[0], ci[0]: the search
+// only writes depth g + 1 >= 1, so they survive every bound.
 
 // No EXPECT (a state from the grader): the distance is unknown, so only T5
 // checks the path and #if EXPECT >= 0 drops the length checks entirely, leaving
@@ -70,7 +72,7 @@ corner_face:
 // follow pi: the search reads oi[g] as &pi[g] + 24.
 pi: .zero 24
 oi: .zero 24
-
+ci: .zero 24
 #include "tables.s"
 
 state:  .string STATE
@@ -270,6 +272,77 @@ loop_rank_p_in:
 
     mv a5, t0
 
+    // ci
+
+    li t0, 6                        // t0 = i = 6
+    li s0, 0                        // s0 = a = 0
+    li s1, 0                        // s1 = b = 0
+    li s2, 0                        // s2 = c = 0
+
+    la t6, p                        // t6 = p[0]'s memory
+    li t1, 3                        // t1 = 3
+    li t2, 6                        // t2 = 6
+loop_root_ci:
+    //if p[i] == 0 ,a = i
+    add t5, t0, t6                  // t5 = p[t]'s memory
+    lbu t4, 0(t5)                   // t4 = p[t]
+
+    bne x0, t4, root_ci_skip0
+    mv s0, t0                       // a = i
+
+root_ci_skip0:
+    //if p[i] == 3 ,b = i
+    bne t1, t4, root_ci_skip1
+    mv s1, t0                       // b = i
+
+root_ci_skip1:
+    //if p[i] == 3 ,c = i
+    bne t2, t4, root_ci_skip2
+    mv s2, t0                       // c = i
+
+root_ci_skip2:
+
+    addi t0, t0, -1                 // t0 = i--
+    bge t0, x0, loop_root_ci
+
+
+    slli t0, s0, 5                  // t0 = (a << 5)
+    slli t1, s0, 4                  // t1 = (a << 4)
+    add t0, t0, t1                  // t0 = (a << 5) + (a << 4)
+    add t0, t0, s0                  // t0 = (a << 5) + (a << 4) + a  
+
+    slli t1, s1, 3                  // t1 = (b << 4)
+    add t0, t0, t1                  // t0 = (a << 5) + (a << 4) + a + (b << 3)
+    sub t0, t0, s1                  // t0 = (a << 5) + (a << 4) + a + (b << 3) - b
+    add t0, t0, s2                  // t0 = (a << 5) + (a << 4) + a + (b << 3) - b + c = idx
+
+
+    la t5, c3_pos                   //t5 = c3_pos[0]'s memory
+    slli t1, t0, 1                  // t1 = idx offset
+    add t5, t5, t1                  // t5 = c3_pos[idx]'s memory
+    lhu t1, 0(t5)                   // t1 = c3_pos[idx]
+
+    la t5, o                        // t5 = o[0]'s memory
+    add t6, t5, s0                  // t6 = o[a]'s memory
+    lbu t2, 0(t6)                   // t2 = o[a]
+    slli t3, t2, 3                  // t3 = (o[a] << 3)
+    add t1, t1, t2                  // t1 = c3_pos[idx] + o[a]
+    add t1, t1, t3                  // t1 = c3_pos[idx] + o[a] + (o[a] << 3)
+
+    add t6, t5, s1                  // t6 = o[b]'s memory
+    lbu t2, 0(t6)                   // t2 = o[b]
+    slli t3, t2, 1                  // t3 = (o[b] << 1)
+    add t1, t1, t2                  // t1 = c3_pos[idx] + o[a] + (o[a] << 3) + o[b]
+    add t1, t1, t3                  // t1 = c3_pos[idx] + o[a] + (o[a] << 3) + o[b] + (o[b] << 1)
+
+    add t6, t5, s2                  // t6 = o[c]'s memory
+    lbu t2, 0(t6)                   // t2 = o[c]
+    add a3, t1, t2                  // a3 = c3_pos[idx] + o[a] + (o[a] << 3) + o[b] + (o[b] << 1) + o[c]
+
+
+
+
+
     // 3. Already solved (pi == 0 and oi == 0)? Print an empty line and exit.
     //    h == 0 iff solved, so h(root) doubles as the solved test.
     //
@@ -283,6 +356,7 @@ loop_rank_p_in:
 //heuristic
     la s0, perm_dist                // perm_dist[0]'s first memory
     la s1, ori_dist                 // ori_dist[0]'s first memory
+    la s2, c3_dist                  // c3_dist[0]'s memory
 
     add t0, s0, a5                  // perm_dist[pi]'s memory
     add t1, s1, a6                  // ori_dist[oi]'s memory
@@ -291,9 +365,18 @@ loop_rank_p_in:
     lbu t3, 0(t1)                   // ori_dist[oi]
 
     add s9, x0, t2                  // assume h = hp
-    bgeu t2, t3, greater_discision
+    bgeu t2, t3, greater_discision0
     add s9, x0, t3                  // correct: h = ho
-greater_discision:
+greater_discision0:
+    //compare ci
+    add t6, s2, a3                  // t6 = c3_dist[ci]'s memory
+    lbu t4, 0(t6)                   // t4 = c3_dist[ci]
+
+    bgeu s9, t4, greater_discision1
+
+    mv s9, t4
+
+greater_discision1:
 
     bne s9, x0, skip_label1
 
@@ -321,10 +404,10 @@ skip_label1:
     //
     //    for (bound = h(root); bound <= MAX_DEPTH; ++bound) {
     //        g = 0;
-    //        pi[0] = pi_root; oi[0] = oi_root; next[0] = 0;
+    //        pi[0] = pi_root; oi[0] = oi_root; ci[0] = ci_root; next[0] = 0;
     //        search (step 5)
     //    }
-    add s0, x0, s9                  // s0 = bound = heuristic(pi,oi)
+    add s0, x0, s9                  // s0 = bound = heuristic(pi, oi, ci)
     addi s1, x0, 9                  // s1 = const = 9
 
 
@@ -334,12 +417,15 @@ skip_label1:
 
     la s6, perm_move_r              // perm_move_r[0]'s memory
     la s7, ori_move_r               // ori_move_r[0]'s memory
+    la s11, c3_move_r               // c3_move_r[0]'s memory
 
     la s8, perm_dist                // perm_dist[0]'s memory
     la s9, ori_dist                 // ori_dist[0]'s memory
+    la a4, c3_dist                  // c3_dist[0]'s memory
 
     sh a5, 0(s3)                    // store a5(rank_perm) to pi[0]
-    sh a6, 24(s3)                   // oi[0] = root oi (oi[0] = Q + 24)
+    sh a6, 24(s3)                   // oi[0] = root_oi (oi[0] = Q + 24)
+    sh a3, 48(s3)                   // ci[0] = root_ci (ci[0] = Q + 48)
 
 
 loop_solve:
@@ -407,21 +493,20 @@ no_prev:
     beq t1, t2, no_prev_equal1
     addi a6, s3, 2                  // otherwise F = Q + 2 = &pi[g + 1]
 
-    //    perm_move[face_of[m]], ori_move[face_of[m]]: pick the face's tables
+    //    perm_move[face_of[m]], ori_move[face_of[m]], c3_move[face_of[m]]:
+    //    pick the face's tables. perm and c3 rows are both padded to 16384
+    //    bytes, so one face << 14 serves both.
 no_prev_equal1:
-    //chose list
     slli t0, a5, 14                 // t0 = face << 14 = face * 16384
+    add a0, t0, s11                 // a0 = c3_move_r + face * 16384
     add t0, t0, s6                  // t0 = perm_move_r + face * 16384
 
     slli t1, a5, 11                 // t1 = face << 11 = face * 2048
     add t1, t1, s7                  // t1 = ori_move_r + face * 2048
 
-
     //    unsigned cp = perm_move[face_of[m]][pi[from]];
     //    unsigned co = ori_move[face_of[m]][oi[from]];
-    //    pi[g + 1] = cp;
-    //    oi[g + 1] = co;
-    //    path[g] = m;
+    //    unsigned cc = c3_move[face_of[m]][ci[from]];
 selected:
     //cp
     lhu t3, 0(a6)                   // t3 = pi[from] = *F
@@ -430,6 +515,7 @@ selected:
     add t2, t4, t0                  // t2 = perm_move_x[0]'s memory + pi[from]
     lhu t6, 0(t2)                   // t6 = perm_move[face_of[m]][pi[from]]
 
+
     //co
     lhu t3, 24(a6)                  // t3 = oi[from] = *(F + 24)
 
@@ -437,29 +523,46 @@ selected:
     add t2, t4, t1                  // t2 = ori_move_x[0]'s memory + oi[from]
     lhu t5, 0(t2)                   // t5 = ori_move[face_of[m]][oi[from]]
 
-    //    g + 1 + max(hp, ho) > bound is hp > r || ho > r with
+    //cc
+    lhu t3, 48(a6)                  // t3 = ci[from] = *(F + 48)
+
+    slli t4, t3, 1
+    add t2, t4, a0                  // t2 = c3_move_x[0]'s memory + ci[from]
+    lhu a3, 0(t2)                   // a3 = c3_move[face_of[m]][ci[from]]
+
+    //    pi[g + 1] = cp; oi[g + 1] = co; ci[g + 1] = cc;
+    //
+    //    g + 1 + max(hp, ho, hc) > bound is hp > r || ho > r || hc > r with
     //    r = bound - g - 1, so each table can prune on its own and the
-    //    second load is skipped whenever the first one prunes:
+    //    later loads are skipped whenever an earlier one prunes:
     //
     //    if (perm_dist[cp] > r) continue;
     //    if (ori_dist[co] > r) continue;
+    //    if (c3_dist[cc] > r) continue;
     //    if (cp == 0 && co == 0) goto found;   /* length g + 1 */
     //
-    //    The goal test can come last: the solved state has hp = ho = 0 and
-    //    r >= 0, so it is never pruned.
+    //    The goal test can come last: the solved state has hp = ho = hc = 0
+    //    and r >= 0, so it is never pruned. pi and oi alone fix the cube, so
+    //    cc needs no test.
     //
-    //    The two stores run for every child, pruned or not, so they can sit
-    //    between the lbu and the bltu that uses t4: on a pipelined model that
-    //    slot would otherwise be a load-use stall.
+    //    The three stores must run for every child, pruned or not: the next
+    //    sibling reads them back as pi/oi/ci[from] with from = g + 1. So they
+    //    can sit between the lbu and the bltu that uses t4: on a pipelined
+    //    model that slot would otherwise be a load-use stall.
     add t2, t6, s8                  // perm_dist[cp]'s memory
     sh t6, 2(s3)                    // pi[g + 1] = cp (Q + 2)
     lbu t4, 0(t2)                   // t4 = hp = perm_dist[cp]
     sh t5, 26(s3)                   // oi[g + 1] = co (Q + 26)
+    sh a3, 50(s3)                   // ci[g + 1] = cc (Q + 50)
     bltu s10, t4, search_top        // r < hp: prune
 
     add t2, t5, s9                  // ori_dist[co]'s memory
     lbu t4, 0(t2)                   // t4 = ho = ori_dist[co]
     bltu s10, t4, search_top        // r < ho: prune
+
+    add t2, a3, a4                  // c3_dist[cc]'s memory
+    lbu t4, 0(t2)                   // t4 = hc = c3_dist[cc]
+    bltu s10, t4, search_top        // r < hc: prune
 
     or t2, t5, t6                   // t2 = co | cp
     beq t2, x0, found               // solved: length g + 1
