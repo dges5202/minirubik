@@ -99,12 +99,43 @@ static int check_rank(void)
     return 1;
 }
 
+static unsigned c3_of(unsigned x)
+{
+    state_t s;
+    unrank_perm(x / NORI, s.p);
+    unrank_ori(x % NORI, s.o);
+    return rank_c3(s.p, s.o);
+}
+
+/* rank_c3 in ida.c must agree with c3_move: ranking a turned state gives
+ * the same index as turning the rank, on every state and face.
+ */
+static int check_c3(void)
+{
+    if (c3_of(0) != 0) {
+        fputs("rank_c3 of solved is not 0\n", stderr);
+        return 0;
+    }
+    for (unsigned x = 0; x < NSTATES; ++x) {
+        unsigned ci = c3_of(x);
+        for (unsigned f = 0; f < FACES; ++f) {
+            unsigned y = perm_move[f][x / NORI] * NORI + ori_move[f][x % NORI];
+            if (c3_of(y) != c3_move[f][ci]) {
+                fprintf(stderr, "rank_c3 disagrees with c3_move at %u\n", x);
+                return 0;
+            }
+        }
+    }
+    printf("rank_c3: agrees with c3_move on all %d states\n", NSTATES);
+    return 1;
+}
+
 /* Gate H1: h(s) <= d(s) on every state. Also reports how tight h is. */
 static int check_admissible(void)
 {
     unsigned long sum_h = 0, sum_d = 0, exact = 0;
     for (unsigned x = 0; x < NSTATES; ++x) {
-        unsigned h = heuristic(x / NORI, x % NORI);
+        unsigned h = heuristic(x / NORI, x % NORI, c3_of(x));
         if (h > dist[x]) {
             fprintf(stderr, "H1 fails at index %u: h %u > d %u\n", x, h,
                     dist[x]);
@@ -131,7 +162,7 @@ int main(int argc, char **argv)
         return 2;
     }
 
-    if (!check_rank())
+    if (!check_rank() || !check_c3())
         return 1;
 
     bfs();
@@ -167,7 +198,7 @@ int main(int argc, char **argv)
         memset(nodes_at_bound, 0, sizeof nodes_at_bound);
         nodes_total = 0;
         uint8_t path[MAX_DEPTH];
-        int len = solve(pi, oi, path);
+        int len = solve(pi, oi, rank_c3(s.p, s.o), path);
 
         char name[2 * CUBIES + 1];
         format_state(&s, name);

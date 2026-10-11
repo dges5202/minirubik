@@ -1,7 +1,8 @@
 /* Host reference for the RV32I solver.
  *
  * IDA* over the factored (permutation, orientation) index pair, pruned by the
- * pattern databases from gen_tables.c. The search and the rank of the input
+ * pattern databases from gen_tables.c. A third index, cubies 0, 3, 6 with
+ * their twists, is carried along only for its pattern database. The search and the rank of the input
  * obey the target's rules: no heap, no recursion, no multiply or divide.
  * Only parsing and the host-side checks still use host arithmetic.
  */
@@ -41,28 +42,33 @@ static const uint8_t twist[FACES][CUBIES] = {
 static unsigned long nodes_at_bound[MAX_DEPTH + 1], nodes_total;
 
 /* Each table is an exact distance in an abstraction, so each is admissible,
- * and so is their max. Their sum is not: one move changes both at once.
+ * and so is their max. Their sum is not: one move changes all at once.
  * Each table is zero only at its solved index, so h == 0 iff solved.
  */
-static unsigned heuristic(unsigned pi, unsigned oi)
+static unsigned heuristic(unsigned pi, unsigned oi, unsigned ci)
 {
-    unsigned hp = perm_dist[pi], ho = ori_dist[oi];
-    return hp > ho ? hp : ho;
+    unsigned h = perm_dist[pi];
+    if (ori_dist[oi] > h)
+        h = ori_dist[oi];
+    if (c3_dist[ci] > h)
+        h = c3_dist[ci];
+    return h;
 }
 
 /* One depth-first pass limited to `bound` moves. Written as a loop over an
  * explicit per-depth stack so it maps onto RV32I without recursion.
  * Returns the solution length, or -1 if none fits within bound.
  */
-static int search(unsigned pi0, unsigned oi0, unsigned bound,
+static int search(unsigned pi0, unsigned oi0, unsigned ci0, unsigned bound,
                   uint8_t path[MAX_DEPTH])
 {
-    unsigned pi[MAX_DEPTH + 1], oi[MAX_DEPTH + 1];
+    unsigned pi[MAX_DEPTH + 1], oi[MAX_DEPTH + 1], ci[MAX_DEPTH + 1];
     uint8_t next[MAX_DEPTH + 1]; /* next move to try at each depth */
     unsigned g = 0;
 
     pi[0] = pi0;
     oi[0] = oi0;
+    ci[0] = ci0;
     next[0] = 0;
     for (;;) {
         if (next[g] == MOVES) {
@@ -86,18 +92,21 @@ static int search(unsigned pi0, unsigned oi0, unsigned bound,
         unsigned from = turns_of[m] == 1 ? g : g + 1;
         unsigned cp = perm_move[face_of[m]][pi[from]];
         unsigned co = ori_move[face_of[m]][oi[from]];
+        unsigned cc = c3_move[face_of[m]][ci[from]];
         pi[g + 1] = cp;
         oi[g + 1] = co;
+        ci[g + 1] = cc;
         path[g] = (uint8_t) m;
         ++nodes_at_bound[bound];
 
+        /* pi and oi alone fix the whole cube, so cc is 0 here too. */
         if (cp == 0 && co == 0)
             return (int) g + 1;
 
         /* A child kept here is unsolved, so h >= 1 and g + 1 < bound <= 11:
          * the stack never grows past MAX_DEPTH and needs no guard.
          */
-        unsigned h = heuristic(cp, co);
+        unsigned h = heuristic(cp, co, cc);
         if (g + 1 + h > bound)
             continue;
 
@@ -106,7 +115,8 @@ static int search(unsigned pi0, unsigned oi0, unsigned bound,
     }
 }
 
-static int solve(unsigned pi, unsigned oi, uint8_t path[MAX_DEPTH])
+static int solve(unsigned pi, unsigned oi, unsigned ci,
+                 uint8_t path[MAX_DEPTH])
 {
     if (pi == 0 && oi == 0)
         return 0;
@@ -115,8 +125,8 @@ static int solve(unsigned pi, unsigned oi, uint8_t path[MAX_DEPTH])
      * the first bound that does is the optimal length. The diameter is 11,
      * so a valid state always succeeds by MAX_DEPTH.
      */
-    for (unsigned bound = heuristic(pi, oi); bound <= MAX_DEPTH; ++bound) {
-        int len = search(pi, oi, bound, path);
+    for (unsigned bound = heuristic(pi, oi, ci); bound <= MAX_DEPTH; ++bound) {
+        int len = search(pi, oi, ci, bound, path);
         nodes_total += nodes_at_bound[bound];
         if (len >= 0)
             return len;
@@ -177,6 +187,25 @@ static unsigned rank_ori(const uint8_t o[CUBIES])
     return r;
 }
 
+/* c3_pos[a*49 + b*7 + c] is rank_pos3(a, b, c) * 27 for cubies 0, 3, 6 at
+ * positions a, b, c, so only their twists are added here.
+ */
+static unsigned rank_c3(const uint8_t p[CUBIES], const uint8_t o[CUBIES])
+{
+    unsigned a = 0, b = 0, c = 0;
+    for (unsigned i = 0; i < CUBIES; ++i) {
+        if (p[i] == 0)
+            a = i;
+        if (p[i] == 3)
+            b = i;
+        if (p[i] == 6)
+            c = i;
+    }
+    unsigned idx = (a << 5) + (a << 4) + a + (b << 3) - b + c; /* x49, x7 */
+    unsigned tw = (o[a] << 3) + o[a] + (o[b] << 1) + o[b] + o[c]; /* x9, x3 */
+    return c3_pos[0][idx] + tw;
+}
+
 /* Gate T5 on the host: replay the path on the full model. */
 static int replay_solves(state_t s, const uint8_t *path, int len)
 {
@@ -205,8 +234,8 @@ int main(int argc, char **argv)
         fprintf(stderr, "usage: %s PPPPPPPOOOOOOO\n", argv[0]);
         return 2;
     }
-    unsigned pi = rank_perm(s.p), oi = rank_ori(s.o);
-    int len = solve(pi, oi, path);
+    unsigned pi = rank_perm(s.p), oi = rank_ori(s.o), ci = rank_c3(s.p, s.o);
+    int len = solve(pi, oi, ci, path);
     if (len < 0) {
         fputs("no solution within 11 moves\n", stderr);
         return 1;
