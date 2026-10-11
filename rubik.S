@@ -16,8 +16,9 @@
 //   tables                s6 = perm_move_r    s7 = ori_move_r     s11 = c3_move_r
 //                         s8 = perm_dist      s9 = ori_dist       a4 = c3_dist
 //   per child (scratch)   t0-t6, a1 = m, a5 = face, a6 = F = &pi[from],
-//                         a0 = c3_move row of the face, a3 = cc
-//   unused                a2, a7 (ecall only), ra, sp, gp, tp
+//                         a0 = face << 14 (perm and c3 rows),
+//                         a2 = turns_of[m] (the c3 turn count), t3 = cc
+//   unused                a3, a7 (ecall only), ra, sp, gp, tp
 // g, P, Q and r move together: push is g++, P += 1, Q += 2, r--; pop the
 // reverse.
 // Neighbouring arrays are reached by fixed offsets, so their order in .data
@@ -450,19 +451,18 @@ loop_solve:
     //        continue;
     //    }
 search_top:
-    //if next[g] == 9
     lbu t2, 11(s4)                  // t2 = next[g] = *(P + 11)
 
-    bne t2, s1, child
+    bne t2, s1, child               // next[g] != MOVES: try move next[g]
 
-    beq s2, x0, bound_failed
+    beq s2, x0, bound_failed        // all moves tried at the root
 
     addi s2, s2, -1                 // s2 = g = g - 1
     addi s4, s4, -1                 // P = &path[g - 1]
     addi s3, s3, -2                 // Q = &pi[g - 1]
     addi s10, s10, 1                // s10 = bound -1 - (g - 1)
 
-    j search_top
+    j search_top                    // pop: continue with the parent
 
     //    unsigned m = next[g]++;
     //    if (g > 0 && face_of[m] == face_of[path[g - 1]])
@@ -492,43 +492,33 @@ no_prev:
     lbu t1, 18(t3)                  // t1 = from_off[m] = *(&face_of[m] + 18)
     add a6, s3, t1                  // F = Q + from_off[m] = &pi[from]
 
-    //    perm_move[face_of[m]], ori_move[face_of[m]], c3_move[face_of[m]]:
-    //    pick the face's tables. perm and c3 rows are both padded to 16384
-    //    bytes, so one face << 14 serves both.
-    slli t0, a5, 14                 // t0 = face << 14 = face * 16384
-    add a0, t0, s11                 // a0 = c3_move_r + face * 16384
-    add t0, t0, s6                  // t0 = perm_move_r + face * 16384
+    //    perm_move[face_of[m]], ori_move[face_of[m]]: pick the face's tables
+    slli a0, a5, 14                 // a0 = face << 14 = face * 16384
+    add t0, a0, s6                  // t0 = perm_move_r + face * 16384
 
     slli t1, a5, 11                 // t1 = face << 11 = face * 2048
     add t1, t1, s7                  // t1 = ori_move_r + face * 2048
 
+
+
     //    unsigned cp = perm_move[face_of[m]][pi[from]];
     //    unsigned co = ori_move[face_of[m]][oi[from]];
-    //    unsigned cc = c3_move[face_of[m]][ci[from]];
 selected:
     //cp
     lhu t3, 0(a6)                   // t3 = pi[from] = *F
 
-    slli t4, t3, 1
+    slli t4, t3, 1                  // t4 = pi[from] << 1, .half entries
     add t2, t4, t0                  // t2 = perm_move_x[0]'s memory + pi[from]
     lhu t6, 0(t2)                   // t6 = perm_move[face_of[m]][pi[from]]
-
 
     //co
     lhu t3, 24(a6)                  // t3 = oi[from] = *(F + 24)
 
-    slli t4, t3, 1
+    slli t4, t3, 1                  // t4 = oi[from] << 1, .half entries
     add t2, t4, t1                  // t2 = ori_move_x[0]'s memory + oi[from]
     lhu t5, 0(t2)                   // t5 = ori_move[face_of[m]][oi[from]]
 
-    //cc
-    lhu t3, 48(a6)                  // t3 = ci[from] = *(F + 48)
-
-    slli t4, t3, 1
-    add t2, t4, a0                  // t2 = c3_move_x[0]'s memory + ci[from]
-    lhu a3, 0(t2)                   // a3 = c3_move[face_of[m]][ci[from]]
-
-    //    pi[g + 1] = cp; oi[g + 1] = co; ci[g + 1] = cc;
+    //    pi[g + 1] = cp; oi[g + 1] = co;
     //
     //    g + 1 + max(hp, ho, hc) > bound is hp > r || ho > r || hc > r with
     //    r = bound - g - 1, so each table can prune on its own and the
@@ -536,36 +526,60 @@ selected:
     //
     //    if (perm_dist[cp] > r) continue;
     //    if (ori_dist[co] > r) continue;
+    //    cc = ci[g], turned turns_of[m] times;     /* see below */
     //    if (c3_dist[cc] > r) continue;
-    //    if (cp == 0 && co == 0) goto found;   /* length g + 1 */
+    //    ci[g + 1] = cc;
+    //    if (cp == 0 && co == 0) goto found;       /* length g + 1 */
     //
     //    The goal test can come last: the solved state has hp = ho = hc = 0
-    //    and r >= 0, so it is never pruned. pi and oi alone fix the cube, so
-    //    cc needs no test.
+    //    and r >= 0, so it is never pruned. Last, it runs only for children
+    //    that pass all three tables. pi and oi alone fix the cube, so cc
+    //    needs no test.
     //
-    //    The three stores must run for every child, pruned or not: the next
-    //    sibling reads them back as pi/oi/ci[from] with from = g + 1. So they
+    //    The two stores must run for every child, pruned or not: the next
+    //    sibling reads them back as pi/oi[from] with from = g + 1. So they
     //    can sit between the lbu and the bltu that uses t4: on a pipelined
     //    model that slot would otherwise be a load-use stall.
     add t2, t6, s8                  // perm_dist[cp]'s memory
     sh t6, 2(s3)                    // pi[g + 1] = cp (Q + 2)
     lbu t4, 0(t2)                   // t4 = hp = perm_dist[cp]
     sh t5, 26(s3)                   // oi[g + 1] = co (Q + 26)
-    sh a3, 50(s3)                   // ci[g + 1] = cc (Q + 50)
     bltu s10, t4, search_top        // r < hp: prune
 
     add t2, t5, s9                  // ori_dist[co]'s memory
     lbu t4, 0(t2)                   // t4 = ho = ori_dist[co]
     bltu s10, t4, search_top        // r < ho: prune
 
-    add t2, a3, a4                  // c3_dist[cc]'s memory
+    //    ci is not chained through siblings: a pruned sibling never computes
+    //    its cc, so ci[g + 1] may be stale. Only the children that survive
+    //    perm and ori (about 29%) turn the parent's ci[g] turns_of[m] times,
+    //    and only those that also pass c3 store ci[g + 1] for their children.
+    //
+    //    cc = ci[g];
+    //    for (t = turns_of[m]; t != 0; --t)
+    //        cc = c3_move[face_of[m]][cc];
+    add t0, a0, s11                 // t0 = c3_move_r + face * 16384
+
+    add t2, s5, a1                  // t2 = face_of[m]'s memory
+    lbu a2, 9(t2)                   // a2 = t = turns_of[m]
+
+    lhu t3, 48(s3)                  // t3 = cc = ci[g] = *(Q + 48)
+loop_c3:
+    slli t4, t3, 1                  // t4 = cc << 1, .half entries
+    add t2, t4, t0                  // t2 = c3_move[face_of[m]][cc]'s memory
+    lhu t3, 0(t2)                   // t3 = cc = c3_move[face_of[m]][cc]
+
+    addi a2, a2, -1                 // --t
+    bne a2, x0, loop_c3             // one more quarter turn
+
+    add t2, t3, a4                  // c3_dist[cc]'s memory
     lbu t4, 0(t2)                   // t4 = hc = c3_dist[cc]
     bltu s10, t4, search_top        // r < hc: prune
 
+    sh t3, 50(s3)                   // ci[g + 1] = cc (Q + 50)
+
     or t2, t5, t6                   // t2 = co | cp
     beq t2, x0, found               // solved: length g + 1
-
-
 
     //    next[g + 1] = 0;
     //    ++g;
@@ -578,7 +592,7 @@ selected:
     addi s3, s3, 2                  // Q = &pi[g + 1]
     addi s10, s10, -1               // s10 = bound - 1 - (g + 1)
 
-    j search_top
+    j search_top                    // push: search the child's moves
 
     //    m is the first turn of the parent's face (moves are tried in
     //    order), so skip all three turns of it at once. Kept out of line:
@@ -589,14 +603,14 @@ selected:
 same_face:
     addi t2, t2, 2                  // t2 = m + 3: first turn of the next face
     sb t2, 11(s4)                   // next[g] = m + 3
-    j search_top
+    j search_top                    // try the next face
 
     //    No path within bound: ++bound and search again (step 4).
 bound_failed:
 
-    addi s0, s0, 1
+    addi s0, s0, 1                  // ++bound
     addi t0, x0, 11                 // t0 = MAX_DEPTH = 11
-    bleu s0, t0, loop_solve
+    bleu s0, t0, loop_solve         // bound <= 11: search again
 
 found:
     sb a1, 0(s4)                    // path[g] = m

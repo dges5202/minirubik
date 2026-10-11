@@ -95,24 +95,35 @@ static int search(unsigned pi0, unsigned oi0, unsigned ci0, unsigned bound,
         unsigned from = turns_of[m] == 1 ? g : g + 1;
         unsigned cp = perm_move[face_of[m]][pi[from]];
         unsigned co = ori_move[face_of[m]][oi[from]];
-        unsigned cc = c3_move[face_of[m]][ci[from]];
         pi[g + 1] = cp;
         oi[g + 1] = co;
-        ci[g + 1] = cc;
         path[g] = (uint8_t) m;
         ++nodes_at_bound[bound];
 
-        /* pi and oi alone fix the whole cube, so cc is 0 here too. */
         if (cp == 0 && co == 0)
             return (int) g + 1;
 
-        /* A child kept here is unsolved, so h >= 1 and g + 1 < bound <= 11:
-         * the stack never grows past MAX_DEPTH and needs no guard.
+        /* max(hp, ho, hc) > r iff one of them is, so each table prunes on
+         * its own. A child kept here is unsolved, so hp or ho >= 1 and
+         * g + 1 < bound <= 11: the stack never grows past MAX_DEPTH and
+         * needs no guard.
          */
-        unsigned h = heuristic(cp, co, cc);
-        if (g + 1 + h > bound)
+        unsigned r = bound - g - 1;
+        if (perm_dist[cp] > r || ori_dist[co] > r)
             continue;
 
+        /* ci is not chained through siblings: a pruned sibling never
+         * computes its cc. Only children that survive the first two tables
+         * turn the parent's ci[g] turns_of[m] times, and only a pushed
+         * child, whose children read it, stores ci[g + 1].
+         */
+        unsigned cc = ci[g];
+        for (unsigned t = 0; t < turns_of[m]; ++t)
+            cc = c3_move[face_of[m]][cc];
+        if (c3_dist[cc] > r)
+            continue;
+
+        ci[g + 1] = cc;
         next[g + 1] = 0;
         ++g;
     }
