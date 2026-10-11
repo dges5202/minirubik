@@ -96,9 +96,14 @@ ro: .zero 7
 path: .zero 11
 next: .zero 12
 // The three turns of each face stay adjacent and in the order 1, 2, 3.
-// turns_of must directly follow face_of: it is read as &face_of[m] + 9.
+// turns_of and from_off must directly follow face_of: they are read as
+// &face_of[m] + 9 and &face_of[m] + 18. from_off[m] is the byte offset of
+// pi[from] from Q: 0 for a face's first turn (from = g), 2 for the others,
+// which continue from the previous sibling (from = g + 1). turns_of is still
+// read by the T5 replay.
 face_of: .byte 0, 0, 0, 1, 1, 1, 2, 2, 2
 turns_of: .byte 1, 2, 3, 1, 2, 3, 1, 2, 3
+from_off: .byte 0, 2, 2, 0, 2, 2, 0, 2, 2
 
 message: .string "T5 failed"
 message2: .string "wrong length"   // path length != EXPECT
@@ -482,21 +487,14 @@ child:
 
     //    pi[g + 1] holds the previous sibling, so each child is one turn:
     //    unsigned from = turns_of[m] == 1 ? g : g + 1;
+    //    A table instead of a compare and branch: F = Q + from_off[m].
 no_prev:
-
-    lbu t1, 9(t3)                   // t1 = turns_of[m] = *(&face_of[m] + 9)
-
-    addi t2, x0, 1
-
-    add a6, s3, x0                  // assume turns_of[m] == 1: F = Q = &pi[g]
-
-    beq t1, t2, no_prev_equal1
-    addi a6, s3, 2                  // otherwise F = Q + 2 = &pi[g + 1]
+    lbu t1, 18(t3)                  // t1 = from_off[m] = *(&face_of[m] + 18)
+    add a6, s3, t1                  // F = Q + from_off[m] = &pi[from]
 
     //    perm_move[face_of[m]], ori_move[face_of[m]], c3_move[face_of[m]]:
     //    pick the face's tables. perm and c3 rows are both padded to 16384
     //    bytes, so one face << 14 serves both.
-no_prev_equal1:
     slli t0, a5, 14                 // t0 = face << 14 = face * 16384
     add a0, t0, s11                 // a0 = c3_move_r + face * 16384
     add t0, t0, s6                  // t0 = perm_move_r + face * 16384
