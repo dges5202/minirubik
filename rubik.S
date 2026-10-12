@@ -22,7 +22,8 @@
 // g, P, Q and r move together: push is g++, P += 1, Q += 2, r--; pop the
 // reverse.
 // Neighbouring arrays are reached by fixed offsets, so their order in .data
-// matters: next[g] = P + 11, oi[g] = Q + 24, turns_of[m] = &face_of[m] + 9.
+// matters: next[g] = P + 11, pface[g] = P + 23, oi[g] = Q + 24,
+// ci[g] = Q + 48, turns_of[m] = &face_of[m] + 9, from_off[m] = &face_of[m] + 18.
 // The root (pi, oi, ci) is stored once in pi[0], oi[0], ci[0]: the search
 // only writes depth g + 1 >= 1, so they survive every bound.
 
@@ -94,8 +95,13 @@ rp: .zero 7
 ro: .zero 7
 // uint8_t path[MAX_DEPTH], next[MAX_DEPTH + 1];
 // next must directly follow path: the search reads next[g] as &path[g] + 11.
+// pface[g] = face_of[path[g - 1]], the face the parent turned, written on
+// each push as &path[g] + 24 and read as &path[g] + 23. pface[0] = 3 matches
+// no face, so the root needs no g == 0 test; pushes never write it.
 path: .zero 11
 next: .zero 12
+pface: .byte 3
+       .zero 11
 // The three turns of each face stay adjacent and in the order 1, 2, 3.
 // turns_of and from_off must directly follow face_of: they are read as
 // &face_of[m] + 9 and &face_of[m] + 18. from_off[m] is the byte offset of
@@ -465,7 +471,7 @@ search_top:
     j search_top                    // pop: continue with the parent
 
     //    unsigned m = next[g]++;
-    //    if (g > 0 && face_of[m] == face_of[path[g - 1]])
+    //    if (face_of[m] == pface[g])     /* pface[0] = 3: never at the root */
     //        goto same_face;
 child:
     add a1, t2, x0                  // a1 = m
@@ -475,13 +481,7 @@ child:
     add t3, s5, a1                  // face_of[m]'s memory
     lbu a5, 0(t3)                   // a5 = face_of[m]
 
-    beq x0, s2, no_prev             // if s2 = g == 0
-
-
-    lbu t6, -1(s4)                  // t6 = path[g - 1] = *(P - 1)
-
-    add t4, s5, t6                  // face_of[path[g - 1]]'s memory
-    lbu t5, 0(t4)                   // t5 = face_of[path[g - 1]]
+    lbu t5, 23(s4)                  // t5 = pface[g] = face_of[path[g - 1]]
 
     beq t5, a5, same_face           // same face as path[g - 1]: skip it
 
@@ -586,6 +586,7 @@ loop_c3:
 
     sb a1, 0(s4)                    // path[g] = m
     sb x0, 12(s4)                   // next[g + 1] = 0 (P + 12)
+    sb a5, 24(s4)                   // pface[g + 1] = face_of[m] (P + 24)
 
     addi s2, s2, 1                  // ++g
     addi s4, s4, 1                  // P = &path[g + 1]
