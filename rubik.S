@@ -457,9 +457,9 @@ loop_solve:
     //        continue;
     //    }
 search_top:
-    lbu t2, 11(s4)                  // t2 = next[g] = *(P + 11)
+    lbu a1, 11(s4)                  // a1 = m = next[g] = *(P + 11)
 
-    bne t2, s1, child               // next[g] != MOVES: try move next[g]
+    bne a1, s1, child               // next[g] != MOVES: try move next[g]
 
     beq s2, x0, bound_failed        // all moves tried at the root
 
@@ -474,8 +474,7 @@ search_top:
     //    if (face_of[m] == pface[g])     /* pface[0] = 3: never at the root */
     //        goto same_face;
 child:
-    add a1, t2, x0                  // a1 = m
-    addi t2, t2, 1                  // t2 = next[g]++
+    addi t2, a1, 1                  // t2 = m + 1
     sb t2, 11(s4)                   // next[g] = m + 1
 
     add t3, s5, a1                  // face_of[m]'s memory
