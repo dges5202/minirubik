@@ -536,24 +536,25 @@ selected:
     sh t5, 26(s3)                   // oi[g + 1] = co (Q + 26)
     bltu s10, t4, search_top        // r < hp: prune
 
+    //    add t0 is the c3 setup, done early to fill the load-use slot. It is
+    //    wasted when ori prunes, but that happens less often than the stall.
     add t2, t5, s9                  // ori_dist[co]'s memory
     lbu t4, 0(t2)                   // t4 = ho = ori_dist[co]
+    add t0, a0, s11                 // t0 = c3_move_r + face * 16384
     bltu s10, t4, search_top        // r < ho: prune
 
     //    ci is not chained through siblings: a pruned sibling never computes
     //    its cc, so ci[g + 1] may be stale. Only the children that survive
-    //    perm and ori (about 29%) turn the parent's ci[g] turns_of[m] times,
-    //    and only those that also pass c3 store ci[g + 1] for their children.
+    //    perm and ori (about 29%) turn the parent's ci[g] turns_of[m] times
+    //    and write ci[g + 1]; it is read only by children of a pushed node.
     //
     //    cc = ci[g];
     //    for (t = turns_of[m]; t != 0; --t)
     //        cc = c3_move[face_of[m]][cc];
-    add t0, a0, s11                 // t0 = c3_move_r + face * 16384
-
+    lhu t3, 48(s3)                  // t3 = cc = ci[g] = *(Q + 48)
     add t2, s5, a1                  // t2 = face_of[m]'s memory
     lbu a2, 9(t2)                   // a2 = t = turns_of[m]
 
-    lhu t3, 48(s3)                  // t3 = cc = ci[g] = *(Q + 48)
 loop_c3:
     slli t4, t3, 1                  // t4 = cc << 1, .half entries
     add t2, t4, t0                  // t2 = c3_move[face_of[m]][cc]'s memory
@@ -564,9 +565,8 @@ loop_c3:
 
     add t2, t3, a4                  // c3_dist[cc]'s memory
     lbu t4, 0(t2)                   // t4 = hc = c3_dist[cc]
-    bltu s10, t4, search_top        // r < hc: prune
-
     sh t3, 50(s3)                   // ci[g + 1] = cc (Q + 50)
+    bltu s10, t4, search_top        // r < hc: prune
 
     or t2, t5, t6                   // t2 = co | cp
     beq t2, x0, found               // solved: length g + 1
