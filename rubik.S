@@ -451,37 +451,27 @@ loop_solve:
     //    Every "return" goes back to search_top, so no return address is
     //    needed: pop is g--, push is g++.
     //
-    //    if (next[g] == MOVES) {
-    //        if (g == 0) goto bound_failed;
-    //        --g;
-    //        continue;
-    //    }
+    //    if (next[g] == MOVES) goto pop;   /* out of line, below */
+    //
+    //    Laid out for the 5-stage pipeline: the common case, a move left to
+    //    try, falls through every branch, and no load is used by the very
+    //    next instruction. pface[g] is loaded before the beq to fill the
+    //    slot after lbu a1; a pop loads it for nothing (one instruction).
 search_top:
     lbu a1, 11(s4)                  // a1 = m = next[g] = *(P + 11)
-
-    bne a1, s1, child               // next[g] != MOVES: try move next[g]
-
-    beq s2, x0, bound_failed        // all moves tried at the root
-
-    addi s2, s2, -1                 // s2 = g = g - 1
-    addi s4, s4, -1                 // P = &path[g - 1]
-    addi s3, s3, -2                 // Q = &pi[g - 1]
-    addi s10, s10, 1                // s10 = bound -1 - (g - 1)
-
-    j search_top                    // pop: continue with the parent
+    lbu t5, 23(s4)                  // t5 = pface[g] = face_of[path[g - 1]]
+    beq a1, s1, pop                 // next[g] == MOVES: all moves tried
 
     //    unsigned m = next[g]++;
     //    if (face_of[m] == pface[g])     /* pface[0] = 3: never at the root */
     //        goto same_face;
+    //
+    //    The next[g] store sits between lbu a5 and the beq that reads a5.
 child:
-    addi t2, a1, 1                  // t2 = m + 1
-    sb t2, 11(s4)                   // next[g] = m + 1
-
     add t3, s5, a1                  // face_of[m]'s memory
     lbu a5, 0(t3)                   // a5 = face_of[m]
-
-    lbu t5, 23(s4)                  // t5 = pface[g] = face_of[path[g - 1]]
-
+    addi t2, a1, 1                  // t2 = m + 1
+    sb t2, 11(s4)                   // next[g] = m + 1
     beq t5, a5, same_face           // same face as path[g - 1]: skip it
 
     //    pi[g + 1] holds the previous sibling, so each child is one turn:
@@ -604,6 +594,22 @@ same_face:
     addi t2, t2, 2                  // t2 = m + 3: first turn of the next face
     sb t2, 11(s4)                   // next[g] = m + 3
     j search_top                    // try the next face
+
+    //    All moves of depth g tried: back to the parent (out of line, so
+    //    the common case falls through the beq in search_top).
+    //
+    //    if (g == 0) goto bound_failed;
+    //    --g;
+    //    continue;
+pop:
+    beq s2, x0, bound_failed        // all moves tried at the root
+
+    addi s2, s2, -1                 // s2 = g = g - 1
+    addi s4, s4, -1                 // P = &path[g - 1]
+    addi s3, s3, -2                 // Q = &pi[g - 1]
+    addi s10, s10, 1                // s10 = bound -1 - (g - 1)
+
+    j search_top                    // pop: continue with the parent
 
     //    No path within bound: ++bound and search again (step 4).
 bound_failed:
