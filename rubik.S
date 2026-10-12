@@ -17,8 +17,9 @@
 //                         s8 = perm_dist      s9 = ori_dist       a4 = c3_dist
 //   per child (scratch)   t0-t6, a1 = m, a5 = face, a6 = F = &pi[from],
 //                         a0 = face << 14 (perm and c3 rows),
-//                         a2 = turns_of[m] (the c3 turn count), t3 = cc
-//   unused                a3, a7 (ecall only), ra, sp, gp, tp
+//                         a2 = turns_of[m] (the c3 turn count), a3 = oi[from],
+//                         t3 = pi[from], then cc
+//   unused                a7 (ecall only), ra, sp, gp, tp
 // g, P, Q and r move together: push is g++, P += 1, Q += 2, r--; pop the
 // reverse.
 // Neighbouring arrays are reached by fixed offsets, so their order in .data
@@ -478,32 +479,32 @@ child:
     //    unsigned from = turns_of[m] == 1 ? g : g + 1;
     //    A table instead of a compare and branch: F = Q + from_off[m].
 no_prev:
+    //    perm_move[face_of[m]], ori_move[face_of[m]]: pick the face's tables.
+    //    slli a0 fills the slot between lbu t1 and the add that reads it.
     lbu t1, 18(t3)                  // t1 = from_off[m] = *(&face_of[m] + 18)
-    add a6, s3, t1                  // F = Q + from_off[m] = &pi[from]
-
-    //    perm_move[face_of[m]], ori_move[face_of[m]]: pick the face's tables
     slli a0, a5, 14                 // a0 = face << 14 = face * 16384
+    add a6, s3, t1                  // F = Q + from_off[m] = &pi[from]
     add t0, a0, s6                  // t0 = perm_move_r + face * 16384
 
     slli t1, a5, 11                 // t1 = face << 11 = face * 2048
     add t1, t1, s7                  // t1 = ori_move_r + face * 2048
 
-
-
     //    unsigned cp = perm_move[face_of[m]][pi[from]];
     //    unsigned co = ori_move[face_of[m]][oi[from]];
+    //
+    //    Both indices are loaded first, so neither load is used by the
+    //    instruction right after it.
 selected:
-    //cp
     lhu t3, 0(a6)                   // t3 = pi[from] = *F
+    lhu a3, 24(a6)                  // a3 = oi[from] = *(F + 24)
 
+    //cp
     slli t4, t3, 1                  // t4 = pi[from] << 1, .half entries
     add t2, t4, t0                  // t2 = perm_move_x[0]'s memory + pi[from]
     lhu t6, 0(t2)                   // t6 = perm_move[face_of[m]][pi[from]]
 
     //co
-    lhu t3, 24(a6)                  // t3 = oi[from] = *(F + 24)
-
-    slli t4, t3, 1                  // t4 = oi[from] << 1, .half entries
+    slli t4, a3, 1                  // t4 = oi[from] << 1, .half entries
     add t2, t4, t1                  // t2 = ori_move_x[0]'s memory + oi[from]
     lhu t5, 0(t2)                   // t5 = ori_move[face_of[m]][oi[from]]
 
