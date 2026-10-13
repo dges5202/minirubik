@@ -26,7 +26,7 @@ int main(void)
         s.p[i] = (uint8_t) (in[i] - '1');
         s.o[i] = (uint8_t) (in[CUBIES + i] - '1');
     }
-    int len = solve(rank_perm(s.p), rank_ori(s.o), path);
+    int len = solve(rank_perm(s.p), rank_ori(s.o), rank_c3(s.p, s.o), path);
     for (int k = 0; k < len; ++k) {
         const char *n = move_names[path[k]];
         if (k)
