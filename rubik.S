@@ -447,17 +447,57 @@ loop_solve:
     addi s10, s0, -1                // s10 = bound - 1
     sb x0, 11(s4)                   // next[0] = 0 (next[0] = P + 11)
 
+    //    same_face and pop sit right above search_top so both fall into
+    //    it. Jumping over them costs a taken branch once per bound,
+    //    instead of one per pop.
+    j search_top                    // skip same_face and pop
+
     // 5. One bounded depth-first pass with the explicit stack.
     //    ida.c: search
-    //    Every "return" goes back to search_top (a push goes straight to
-    //    child), so no return address is needed: pop is g--, push is g++.
-    //
-    //    if (next[g] == MOVES) goto pop;   /* out of line, after step 8 */
+    //    Every "return" goes back to search_top (a push or a same-face skip
+    //    goes straight to child), so no return address is needed: pop is
+    //    g--, push is g++.
     //
     //    Laid out for the 5-stage pipeline: the common case, a move left to
     //    try, falls through every branch, and no load is used by the very
-    //    next instruction. pface[g] is loaded before the beq to fill the
-    //    slot after lbu a1; a pop loads it for nothing (one instruction).
+    //    next instruction. The two rarer paths, same_face and pop, come
+    //    first and fall through into search_top.
+
+    //    m is the first turn of the parent's face (moves are tried in
+    //    order), so skip all three turns of it at once. Kept out of line:
+    //    the common case, a different face, falls through the beq instead
+    //    of paying for a taken branch.
+    //
+    //    if (face_of[m] == face_of[path[g - 1]]) { next[g] += 2; continue; }
+    //
+    //    Like a push, this knows what search_top would load: m + 3 and the
+    //    same pf, still in t5. So it tests m + 3 == MOVES itself and goes
+    //    straight to child, which stores next[g] = m + 4. When m + 3 ==
+    //    MOVES it falls into pop; next[g] is not stored then, since a later
+    //    push to this depth enters child at m = 0 without reading it.
+same_face:
+    addi a1, t2, 2                  // a1 = m + 3: first turn of the next face
+    bne a1, s1, child               // m + 3 != MOVES: try the next face
+
+    //    All moves of depth g tried: back to the parent, then fall into
+    //    search_top. The parent's next[g] and pface[g] are no longer in any
+    //    register, so search_top must load them.
+    //
+    //    if (g == 0) goto bound_failed;
+    //    --g;
+    //    continue;
+pop:
+    beq s2, x0, bound_failed        // all moves tried at the root
+
+    addi s2, s2, -1                 // s2 = g = g - 1
+    addi s4, s4, -1                 // P = &path[g - 1]
+    addi s3, s3, -2                 // Q = &pi[g - 1]
+    addi s10, s10, 1                // s10 = bound -1 - (g - 1)
+
+    //    if (next[g] == MOVES) goto pop;
+    //
+    //    pface[g] is loaded before the beq to fill the slot after lbu a1;
+    //    a pop loads it for nothing (one instruction).
 search_top:
     lbu a1, 11(s4)                  // a1 = m = next[g] = *(P + 11)
     lbu t5, 23(s4)                  // t5 = pface[g] = face_of[path[g - 1]]
@@ -794,46 +834,11 @@ test_loop2:
     li a7, 10
     ecall
 
-    // Out-of-line parts of the search loop (step 5). They sit after the
-    // exit so that nothing falls into them; they are reached only by
-    // branches, which reach anywhere in this .text (B-type: +-4 KiB).
-
-    //    m is the first turn of the parent's face (moves are tried in
-    //    order), so skip all three turns of it at once. Kept out of line:
-    //    the common case, a different face, falls through the beq instead
-    //    of paying for a taken branch.
-    //
-    //    if (face_of[m] == face_of[path[g - 1]]) { next[g] += 2; continue; }
-    //
-    //    Like a push, this knows what search_top would load: m + 3 and the
-    //    same pf, still in t5. So it tests m + 3 == MOVES itself and goes
-    //    straight to child, which stores next[g] = m + 4. When m + 3 ==
-    //    MOVES it falls into pop; next[g] is not stored then, since a later
-    //    push to this depth enters child at m = 0 without reading it.
-same_face:
-    addi a1, t2, 2                  // a1 = m + 3: first turn of the next face
-    bne a1, s1, child               // m + 3 != MOVES: try the next face
-
-    //    All moves of depth g tried: back to the parent (out of line, so
-    //    the common case falls through the beq in search_top; same_face
-    //    falls into it).
-    //
-    //    if (g == 0) goto bound_failed;
-    //    --g;
-    //    continue;
-pop:
-    beq s2, x0, bound_failed        // all moves tried at the root
-
-    addi s2, s2, -1                 // s2 = g = g - 1
-    addi s4, s4, -1                 // P = &path[g - 1]
-    addi s3, s3, -2                 // Q = &pi[g - 1]
-    addi s10, s10, 1                // s10 = bound -1 - (g - 1)
-
-    j search_top                    // pop: continue with the parent
-
-    //    No path within bound: ++bound and search again (step 4). A valid
-    //    state is always solved by bound 11, so falling through means a
-    //    bug and lands on t5_failed.
+    //    No path within bound: ++bound and search again (step 4). Placed
+    //    after the exit so that nothing falls into it; pop's beq reaches
+    //    anywhere in this .text (B-type: +-4 KiB). A valid state is always
+    //    solved by bound 11, so falling through means a bug and lands on
+    //    t5_failed.
 bound_failed:
 
     addi s0, s0, 1                  // ++bound
