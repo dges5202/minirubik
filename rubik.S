@@ -804,13 +804,19 @@ test_loop2:
     //    of paying for a taken branch.
     //
     //    if (face_of[m] == face_of[path[g - 1]]) { next[g] += 2; continue; }
+    //
+    //    Like a push, this knows what search_top would load: m + 3 and the
+    //    same pf, still in t5. So it tests m + 3 == MOVES itself and goes
+    //    straight to child, which stores next[g] = m + 4. When m + 3 ==
+    //    MOVES it falls into pop; next[g] is not stored then, since a later
+    //    push to this depth enters child at m = 0 without reading it.
 same_face:
-    addi t2, t2, 2                  // t2 = m + 3: first turn of the next face
-    sb t2, 11(s4)                   // next[g] = m + 3
-    j search_top                    // try the next face
+    addi a1, t2, 2                  // a1 = m + 3: first turn of the next face
+    bne a1, s1, child               // m + 3 != MOVES: try the next face
 
     //    All moves of depth g tried: back to the parent (out of line, so
-    //    the common case falls through the beq in search_top).
+    //    the common case falls through the beq in search_top; same_face
+    //    falls into it).
     //
     //    if (g == 0) goto bound_failed;
     //    --g;
