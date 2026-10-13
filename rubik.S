@@ -449,10 +449,10 @@ loop_solve:
 
     // 5. One bounded depth-first pass with the explicit stack.
     //    ida.c: search
-    //    Every "return" goes back to search_top, so no return address is
-    //    needed: pop is g--, push is g++.
+    //    Every "return" goes back to search_top (a push goes straight to
+    //    child), so no return address is needed: pop is g--, push is g++.
     //
-    //    if (next[g] == MOVES) goto pop;   /* out of line, below */
+    //    if (next[g] == MOVES) goto pop;   /* out of line, after step 8 */
     //
     //    Laid out for the 5-stage pipeline: the common case, a move left to
     //    try, falls through every branch, and no load is used by the very
@@ -519,7 +519,7 @@ selected:
     //    cc = ci[g], turned turns_of[m] times;     /* see below */
     //    if (c3_dist[cc] > r) continue;
     //    ci[g + 1] = cc;
-    //    if (cp == 0 && co == 0) goto found;       /* length g + 1 */
+    //    if (cp == 0 && co == 0) goto found;       /* tested after the push */
     //
     //    The goal test can come last: the solved state has hp = ho = hc = 0
     //    and r >= 0, so it is never pruned. Last, it runs only for children
@@ -568,14 +568,23 @@ loop_c3:
     sh t3, 50(s3)                   // ci[g + 1] = cc (Q + 50)
     bltu s10, t4, search_top        // r < hc: prune
 
-    or t2, t5, t6                   // t2 = co | cp
-    beq t2, x0, found               // solved: length g + 1
-
-    //    next[g + 1] = 0;
+    //    Push first, then test for the goal with the branch that loops
+    //    back, so one taken branch does both jobs and found falls through:
+    //
+    //    path[g] = m;
+    //    pface[g + 1] = face_of[m];
     //    ++g;
-
+    //    if (cp != 0 || co != 0) goto child;   /* with m = 0, pf = face */
+    //    found:                                /* length g */
+    //
+    //    The child starts at m = 0 with pf = face_of[m], both already in
+    //    registers, so search_top's two loads and MOVES test are skipped,
+    //    and child stores next[g] = 1 itself, so next[g] = 0 is not needed.
+    //    pface[g] must still be stored: search_top reloads it after every
+    //    prune and pop. a1 and t5 are overwritten only after their old
+    //    values (m, co) are last read.
     sb a1, 0(s4)                    // path[g] = m
-    sb x0, 12(s4)                   // next[g + 1] = 0 (P + 12)
+    li a1, 0                        // a1 = m = 0 for the child
     sb a5, 24(s4)                   // pface[g + 1] = face_of[m] (P + 24)
 
     addi s2, s2, 1                  // ++g
@@ -583,63 +592,30 @@ loop_c3:
     addi s3, s3, 2                  // Q = &pi[g + 1]
     addi s10, s10, -1               // s10 = bound - 1 - (g + 1)
 
-    j search_top                    // push: search the child's moves
+    or t2, t5, t6                   // t2 = co | cp
+    mv t5, a5                       // t5 = pface[g] = face_of[m]
+    bne t2, x0, child               // not solved: search the child's moves
 
-    //    m is the first turn of the parent's face (moves are tried in
-    //    order), so skip all three turns of it at once. Kept out of line:
-    //    the common case, a different face, falls through the beq instead
-    //    of paying for a taken branch.
-    //
-    //    if (face_of[m] == face_of[path[g - 1]]) { next[g] += 2; continue; }
-same_face:
-    addi t2, t2, 2                  // t2 = m + 3: first turn of the next face
-    sb t2, 11(s4)                   // next[g] = m + 3
-    j search_top                    // try the next face
-
-    //    All moves of depth g tried: back to the parent (out of line, so
-    //    the common case falls through the beq in search_top).
-    //
-    //    if (g == 0) goto bound_failed;
-    //    --g;
-    //    continue;
-pop:
-    beq s2, x0, bound_failed        // all moves tried at the root
-
-    addi s2, s2, -1                 // s2 = g = g - 1
-    addi s4, s4, -1                 // P = &path[g - 1]
-    addi s3, s3, -2                 // Q = &pi[g - 1]
-    addi s10, s10, 1                // s10 = bound -1 - (g - 1)
-
-    j search_top                    // pop: continue with the parent
-
-    //    No path within bound: ++bound and search again (step 4).
-bound_failed:
-
-    addi s0, s0, 1                  // ++bound
-    addi t0, x0, 11                 // t0 = MAX_DEPTH = 11
-    bleu s0, t0, loop_solve         // bound <= 11: search again
-
+    //    Solved: the path is path[0..g-1], length g.
 found:
-    sb a1, 0(s4)                    // path[g] = m
-
 #if EXPECT >= 0
-    //    if (EXPECT != g + 1) goto len_failed;
+    //    if (EXPECT != g) goto len_failed;
     li t0, EXPECT                   // t0 = EXPECT
-    addi t1, s2, 1                  // t1 = len = g + 1
+    addi t1, s2, 0                  // t1 = len = g
     bne t0, t1, len_failed          // EXPECT != len
 #endif
 
     // 6. Print the path as move names separated by spaces, then a newline.
     //
-    //    for (i = 0; i < len; ++i)            /* len = g + 1 */
+    //    for (i = 0; i < len; ++i)            /* len = g */
     //        printf("%s%s", i ? " " : "", move_names[path[i]]);
     //    putchar('\n');
     addi t0, x0, 0                  // t0 = i = 0
-    addi t1, s2, 1                  // t1 = g + 1
+    addi t1, s2, 0                  // t1 = len = g
 
     la t3, move_names               // move_names[0]'s memory
 
-    sub s4, s4, s2                  // s4 return to path[0]'s memory
+    sub s4, s4, s2                  // s4 = &path[g] - g = &path[0]
 
 loop_print:
 
@@ -697,7 +673,7 @@ print_equal2:
     //        }
 
     addi s0, x0, 0                  // s0 = i = 0
-    addi s1, s2, 1                  // s1 = len = g + 1
+    addi s1, s2, 0                  // s1 = len = g
 
     la a3, turns_of                 // turns_of[0]'s memory
     la s8, face_of                  // face_of[0]'s memory
@@ -817,6 +793,46 @@ test_loop2:
     // 8. Exit with code 0.
     li a7, 10
     ecall
+
+    // Out-of-line parts of the search loop (step 5). They sit after the
+    // exit so that nothing falls into them; they are reached only by
+    // branches, which reach anywhere in this .text (B-type: +-4 KiB).
+
+    //    m is the first turn of the parent's face (moves are tried in
+    //    order), so skip all three turns of it at once. Kept out of line:
+    //    the common case, a different face, falls through the beq instead
+    //    of paying for a taken branch.
+    //
+    //    if (face_of[m] == face_of[path[g - 1]]) { next[g] += 2; continue; }
+same_face:
+    addi t2, t2, 2                  // t2 = m + 3: first turn of the next face
+    sb t2, 11(s4)                   // next[g] = m + 3
+    j search_top                    // try the next face
+
+    //    All moves of depth g tried: back to the parent (out of line, so
+    //    the common case falls through the beq in search_top).
+    //
+    //    if (g == 0) goto bound_failed;
+    //    --g;
+    //    continue;
+pop:
+    beq s2, x0, bound_failed        // all moves tried at the root
+
+    addi s2, s2, -1                 // s2 = g = g - 1
+    addi s4, s4, -1                 // P = &path[g - 1]
+    addi s3, s3, -2                 // Q = &pi[g - 1]
+    addi s10, s10, 1                // s10 = bound -1 - (g - 1)
+
+    j search_top                    // pop: continue with the parent
+
+    //    No path within bound: ++bound and search again (step 4). A valid
+    //    state is always solved by bound 11, so falling through means a
+    //    bug and lands on t5_failed.
+bound_failed:
+
+    addi s0, s0, 1                  // ++bound
+    addi t0, x0, 11                 // t0 = MAX_DEPTH = 11
+    bleu s0, t0, loop_solve         // bound <= 11: search again
 
     //    puts("T5 failed"); exit(1);
 t5_failed:
